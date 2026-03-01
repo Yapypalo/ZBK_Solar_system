@@ -87,59 +87,6 @@ function isolateDeimosMeshHierarchy(root: THREE.Object3D): void {
   pruneToTargetMeshPath(root, targetMesh);
 }
 
-function computeMeshBoundsInRootSpace(root: THREE.Object3D): THREE.Box3 {
-  root.updateMatrixWorld(true);
-  const rootInverse = new THREE.Matrix4().copy(root.matrixWorld).invert();
-  const bounds = new THREE.Box3();
-  const meshBounds = new THREE.Box3();
-  let hasMesh = false;
-
-  root.traverse((node) => {
-    const mesh = node as THREE.Mesh;
-    if (!mesh.isMesh || !mesh.geometry) {
-      return;
-    }
-
-    const geometry = mesh.geometry;
-    if (!geometry.boundingBox) {
-      geometry.computeBoundingBox();
-    }
-    if (!geometry.boundingBox) {
-      return;
-    }
-
-    meshBounds
-      .copy(geometry.boundingBox)
-      .applyMatrix4(mesh.matrixWorld)
-      .applyMatrix4(rootInverse);
-
-    bounds.union(meshBounds);
-    hasMesh = true;
-  });
-
-  if (!hasMesh) {
-    bounds.makeEmpty();
-  }
-
-  return bounds;
-}
-
-function recenterVisualToMeshBounds(root: THREE.Object3D): void {
-  const bounds = computeMeshBoundsInRootSpace(root);
-  if (bounds.isEmpty()) {
-    return;
-  }
-
-  const center = new THREE.Vector3();
-  bounds.getCenter(center);
-  if (center.lengthSq() < 1e-10) {
-    return;
-  }
-
-  root.position.sub(center);
-  root.updateMatrixWorld(true);
-}
-
 function tuneMeshMaterial(mesh: THREE.Mesh, config: BodyVisualConfig): void {
   const applyTuning = (material: THREE.Material): void => {
     if (material instanceof THREE.MeshStandardMaterial) {
@@ -269,10 +216,6 @@ export async function createBodyVisual(
   normalizeModelToRadius(visual, config.visualRadius);
   if (config.modelScaleMultiplier && config.modelScaleMultiplier > 0) {
     visual.scale.multiplyScalar(config.modelScaleMultiplier);
-  }
-
-  if (config.id === "deimos") {
-    recenterVisualToMeshBounds(visual);
   }
 
   if (config.orientationOffsetDeg) {
