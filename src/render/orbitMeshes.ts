@@ -7,82 +7,58 @@ import { KM_PER_SCENE_UNIT } from "../sim/constants";
 import { degToRad, normalizeAngleRadians, sampleOrbitPointsKm } from "../sim/orbitMath";
 
 const TAU = Math.PI * 2;
+const BASE_OPACITY = 0.72;
+const BASE_LINE_WIDTH = 1.35;
+const TRAIL_TOTAL_DEG = 359.0;
 
 export interface OrbitArcRuntime {
   bodyId: BodyId;
-  segmentA: Line2;
-  segmentB: Line2;
+  line: Line2;
+  geometry: LineGeometry;
+  material: LineMaterial;
   basePointsScene: Float32Array;
-  lastGapStartRad: number;
+  basePointCount: number;
+  trailPositions: Float32Array;
+  trailColors: Float32Array;
+  trailPointCount: number;
+  totalTrailRad: number;
+  fadeDegrees: number;
 }
 
 function createLineMaterial(color: THREE.ColorRepresentation): LineMaterial {
   const material = new LineMaterial({
     color,
-    linewidth: 1.1,
+    linewidth: BASE_LINE_WIDTH,
     transparent: true,
-    opacity: 0.72,
+    opacity: BASE_OPACITY,
     depthWrite: false,
     depthTest: true,
     toneMapped: false,
     worldUnits: false,
     dashed: false,
     alphaToCoverage: true,
+    vertexColors: true,
   });
   material.resolution.set(window.innerWidth, window.innerHeight);
   return material;
 }
 
-function createLine(color: THREE.ColorRepresentation): Line2 {
-  const line = new Line2(new LineGeometry(), createLineMaterial(color));
+function createLine(color: THREE.ColorRepresentation): {
+  line: Line2;
+  geometry: LineGeometry;
+  material: LineMaterial;
+} {
+  const geometry = new LineGeometry();
+  const material = createLineMaterial(color);
+  const line = new Line2(geometry, material);
   line.frustumCulled = false;
   line.renderOrder = 1;
-  return line;
+  return { line, geometry, material };
 }
 
-function pointsCount(runtime: OrbitArcRuntime): number {
-  return runtime.basePointsScene.length / 3;
-}
-
-function appendPoint(target: number[], basePointsScene: Float32Array, index: number): void {
-  const pointOffset = index * 3;
-  target.push(
-    basePointsScene[pointOffset],
-    basePointsScene[pointOffset + 1],
-    basePointsScene[pointOffset + 2],
-  );
-}
-
-function appendRange(
-  target: number[],
-  basePointsScene: Float32Array,
-  startIndex: number,
-  endIndex: number,
-): void {
-  if (startIndex > endIndex) {
-    return;
-  }
-
-  for (let index = startIndex; index <= endIndex; index += 1) {
-    appendPoint(target, basePointsScene, index);
-  }
-}
-
-function applyPositions(line: Line2, positions: number[]): void {
-  const geometry = line.geometry as LineGeometry;
-  if (positions.length < 6) {
-    line.visible = false;
-    return;
-  }
-
-  line.visible = true;
-  geometry.setPositions(positions);
-  line.computeLineDistances();
-}
-
-function angularDistance(a: number, b: number): number {
-  const diff = Math.abs(normalizeAngleRadians(a - b));
-  return Math.min(diff, TAU - diff);
+function smoothstep01(value: number): number {
+  const clamped = THREE.MathUtils.clamp(value, 0, 1);
+  return clamped * clamped * (3 - 2 * clamped);
 }
 
 function dropDuplicateClosingPoint(points: THREE.Vector3[]): THREE.Vector3[] {
@@ -99,90 +75,123 @@ function dropDuplicateClosingPoint(points: THREE.Vector3[]): THREE.Vector3[] {
   return points;
 }
 
+function sampleRingPoint(
+  basePointsScene: Float32Array,
+  pointCount: number,
+  floatIndex: number,
+  target: Float32Array,
+  targetOffset: number,
+): void {
+  const wrapped = ((floatIndex % pointCount) + pointCount) % pointCount;
+  const lowIndex = Math.floor(wrapped);
+  const highIndex = (lowIndex + 1) % pointCount;
+  const blend = wrapped - lowIndex;
+
+  const lowOffset = lowIndex * 3;
+  const highOffset = highIndex * 3;
+
+  target[targetOffset] = THREE.MathUtils.lerp(
+    basePointsScene[lowOffset],
+    basePointsScene[highOffset],
+    blend,
+  );
+  target[targetOffset + 1] = THREE.MathUtils.lerp(
+    basePointsScene[lowOffset + 1],
+    basePointsScene[highOffset + 1],
+    blend,
+  );
+  target[targetOffset + 2] = THREE.MathUtils.lerp(
+    basePointsScene[lowOffset + 2],
+    basePointsScene[highOffset + 2],
+    blend,
+  );
+}
+
 export function createOrbitArcRuntime(
   bodyId: BodyId,
   orbit: OrbitElements,
   color: THREE.ColorRepresentation,
-  segments = 1024,
+  samples = 1440,
 ): OrbitArcRuntime {
-  const sampled = dropDuplicateClosingPoint(sampleOrbitPointsKm(orbit, segments));
+  const baseSampleCount = Math.max(2048, samples * 4);
+  const sampled = dropDuplicateClosingPoint(sampleOrbitPointsKm(orbit, baseSampleCount));
   const basePointsScene = new Float32Array(sampled.length * 3);
 
   sampled.forEach((point, index) => {
-    const scaledPoint = point.multiplyScalar(1 / KM_PER_SCENE_UNIT);
+    const scaled = point.multiplyScalar(1 / KM_PER_SCENE_UNIT);
     const offset = index * 3;
-    basePointsScene[offset] = scaledPoint.x;
-    basePointsScene[offset + 1] = scaledPoint.y;
-    basePointsScene[offset + 2] = scaledPoint.z;
+    basePointsScene[offset] = scaled.x;
+    basePointsScene[offset + 1] = scaled.y;
+    basePointsScene[offset + 2] = scaled.z;
   });
 
-  const runtime: OrbitArcRuntime = {
-    bodyId,
-    segmentA: createLine(color),
-    segmentB: createLine(color),
-    basePointsScene,
-    lastGapStartRad: Number.NaN,
-  };
+  const trailPointCount = Math.max(1024, samples);
+  const { line, geometry, material } = createLine(color);
 
-  return runtime;
+  return {
+    bodyId,
+    line,
+    geometry,
+    material,
+    basePointsScene,
+    basePointCount: sampled.length,
+    trailPositions: new Float32Array((trailPointCount + 1) * 3),
+    trailColors: new Float32Array((trailPointCount + 1) * 3),
+    trailPointCount,
+    totalTrailRad: degToRad(TRAIL_TOTAL_DEG),
+    fadeDegrees: THREE.MathUtils.clamp(orbit.orbitGapDegrees ?? 45, 0, 359.5),
+  };
 }
 
 export function updateOrbitArc(
   runtime: OrbitArcRuntime,
   currentTrueAnomalyRad: number,
-  gapDegrees: number,
-  resolutionWidth: number,
-  resolutionHeight: number,
-  minUpdateDeltaRad = 0,
 ): void {
-  const normalizedGapStart = normalizeAngleRadians(currentTrueAnomalyRad);
-  if (
-    Number.isFinite(runtime.lastGapStartRad) &&
-    angularDistance(normalizedGapStart, runtime.lastGapStartRad) < minUpdateDeltaRad
-  ) {
+  if (runtime.basePointCount < 2) {
+    runtime.line.visible = false;
     return;
   }
 
-  runtime.lastGapStartRad = normalizedGapStart;
-  setOrbitVisualResolution(runtime, resolutionWidth, resolutionHeight);
+  const headAnomaly = normalizeAngleRadians(currentTrueAnomalyRad);
+  const fadeStartDeg = 360 - runtime.fadeDegrees;
 
-  const count = pointsCount(runtime);
-  if (count < 3) {
-    runtime.segmentA.visible = false;
-    runtime.segmentB.visible = false;
-    return;
+  for (let pointIndex = 0; pointIndex <= runtime.trailPointCount; pointIndex += 1) {
+    const progress = pointIndex / runtime.trailPointCount;
+    const angleBehind = progress * runtime.totalTrailRad;
+    const sampleAnomaly = normalizeAngleRadians(headAnomaly - angleBehind);
+    const floatIndex = (sampleAnomaly / TAU) * runtime.basePointCount;
+    const targetOffset = pointIndex * 3;
+
+    sampleRingPoint(
+      runtime.basePointsScene,
+      runtime.basePointCount,
+      floatIndex,
+      runtime.trailPositions,
+      targetOffset,
+    );
+
+    let fade = 1;
+    if (runtime.fadeDegrees > 0) {
+      const trailDeg = progress * 360;
+      if (trailDeg > fadeStartDeg) {
+        const t = (trailDeg - fadeStartDeg) / runtime.fadeDegrees;
+        fade = 1 - smoothstep01(t);
+      }
+    }
+
+    if (pointIndex >= runtime.trailPointCount - 2) {
+      fade = 0;
+    }
+
+    runtime.trailColors[targetOffset] = fade;
+    runtime.trailColors[targetOffset + 1] = fade;
+    runtime.trailColors[targetOffset + 2] = fade;
   }
 
-  const normalizedGap = THREE.MathUtils.clamp(gapDegrees, 0, 359.5);
-  if (normalizedGap <= 0) {
-    const positions: number[] = [];
-    appendRange(positions, runtime.basePointsScene, 0, count - 1);
-    appendPoint(positions, runtime.basePointsScene, 0);
-    applyPositions(runtime.segmentA, positions);
-    runtime.segmentB.visible = false;
-    return;
-  }
-
-  const gapSizeRad = degToRad(normalizedGap);
-  const gapEnd = normalizeAngleRadians(normalizedGapStart + gapSizeRad);
-
-  const startIndex = Math.floor((normalizedGapStart / TAU) * count) % count;
-  const endIndex = Math.floor((gapEnd / TAU) * count) % count;
-
-  const segmentAPositions: number[] = [];
-  const segmentBPositions: number[] = [];
-
-  if (startIndex < endIndex) {
-    appendRange(segmentAPositions, runtime.basePointsScene, endIndex + 1, count - 1);
-    appendRange(segmentBPositions, runtime.basePointsScene, 0, startIndex - 1);
-  } else if (startIndex > endIndex) {
-    appendRange(segmentAPositions, runtime.basePointsScene, endIndex + 1, startIndex - 1);
-  } else {
-    appendRange(segmentAPositions, runtime.basePointsScene, 0, count - 1);
-  }
-
-  applyPositions(runtime.segmentA, segmentAPositions);
-  applyPositions(runtime.segmentB, segmentBPositions);
+  runtime.line.visible = true;
+  runtime.geometry.setPositions(runtime.trailPositions);
+  runtime.geometry.setColors(runtime.trailColors);
+  runtime.line.computeLineDistances();
 }
 
 export function setOrbitVisualResolution(
@@ -192,6 +201,5 @@ export function setOrbitVisualResolution(
 ): void {
   const safeWidth = Math.max(1, width);
   const safeHeight = Math.max(1, height);
-  (orbit.segmentA.material as LineMaterial).resolution.set(safeWidth, safeHeight);
-  (orbit.segmentB.material as LineMaterial).resolution.set(safeWidth, safeHeight);
+  orbit.material.resolution.set(safeWidth, safeHeight);
 }

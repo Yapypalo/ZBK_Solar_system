@@ -22,8 +22,6 @@ import type {
 } from "./types";
 import "./styles/theme.css";
 
-const ORBIT_GAP_UPDATE_STEP_RAD = degToRad(0.15);
-
 interface RuntimeBody {
   config: BodyVisualConfig;
   root: THREE.Group;
@@ -46,6 +44,9 @@ interface FocusRuntimeState {
 
 interface HudRefs {
   viewport: HTMLElement;
+  hudPanel: HTMLElement;
+  warningStripe: HTMLElement;
+  hudToggleButton: HTMLButtonElement;
   dateValue: HTMLElement;
   scaleValue: HTMLElement;
   qualityValue: HTMLElement;
@@ -61,9 +62,98 @@ const dateFormatter = new Intl.DateTimeFormat("en-GB", {
   timeZone: "UTC",
 });
 
+interface SunCoronaRuntime {
+  group: THREE.Group;
+  meshPrimary: THREE.Mesh;
+  meshSecondary: THREE.Mesh;
+  materialPrimary: THREE.ShaderMaterial;
+  materialSecondary: THREE.ShaderMaterial;
+}
+
+function createSunCoronaMaterial(
+  intensity: number,
+  speed: number,
+  colorA: string,
+  colorB: string,
+): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.AdditiveBlending,
+    uniforms: {
+      uTime: { value: 0 },
+      uIntensity: { value: intensity },
+      uSpeed: { value: speed },
+      uColorA: { value: new THREE.Color(colorA) },
+      uColorB: { value: new THREE.Color(colorB) },
+    },
+    vertexShader: `
+      varying vec3 vWorldPos;
+      varying vec3 vWorldNormal;
+      void main() {
+        vec4 worldPos = modelMatrix * vec4(position, 1.0);
+        vWorldPos = worldPos.xyz;
+        vWorldNormal = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * worldPos;
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform float uIntensity;
+      uniform float uSpeed;
+      uniform vec3 uColorA;
+      uniform vec3 uColorB;
+      varying vec3 vWorldPos;
+      varying vec3 vWorldNormal;
+
+      void main() {
+        vec3 viewDir = normalize(cameraPosition - vWorldPos);
+        float rim = pow(1.0 - abs(dot(normalize(vWorldNormal), viewDir)), 2.2);
+
+        vec3 n = normalize(vWorldNormal);
+        float swirl = sin(atan(n.z, n.x) * 9.0 + uTime * uSpeed + n.y * 8.0) * 0.5 + 0.5;
+        float pulse = sin(uTime * (uSpeed * 1.4) + n.y * 20.0) * 0.5 + 0.5;
+        float turbulence = 0.58 + 0.42 * swirl;
+        float alpha = rim * turbulence * (0.42 + 0.58 * pulse) * uIntensity;
+        vec3 color = mix(uColorA, uColorB, swirl);
+
+        gl_FragColor = vec4(color, alpha);
+      }
+    `,
+  });
+}
+
+function createSunCorona(sunRadius: number): SunCoronaRuntime {
+  const group = new THREE.Group();
+  group.name = "sun-corona-group";
+
+  const geometryPrimary = new THREE.SphereGeometry(sunRadius * 1.28, 64, 64);
+  const geometrySecondary = new THREE.SphereGeometry(sunRadius * 1.44, 64, 64);
+
+  const materialPrimary = createSunCoronaMaterial(0.95, 0.7, "#FFAA3A", "#FFE589");
+  const materialSecondary = createSunCoronaMaterial(0.68, 1.15, "#FF8D2B", "#FFD96C");
+
+  const meshPrimary = new THREE.Mesh(geometryPrimary, materialPrimary);
+  const meshSecondary = new THREE.Mesh(geometrySecondary, materialSecondary);
+  meshPrimary.name = "sun-corona-primary";
+  meshSecondary.name = "sun-corona-secondary";
+  group.add(meshPrimary);
+  group.add(meshSecondary);
+
+  return {
+    group,
+    meshPrimary,
+    meshSecondary,
+    materialPrimary,
+    materialSecondary,
+  };
+}
+
 function createHud(app: HTMLElement): HudRefs {
   app.innerHTML = `
     <div id="viewport" class="viewport"></div>
+    <button id="hud-visibility-toggle" type="button" class="hud-visibility-toggle">HUD: ON (H)</button>
     <aside class="hud">
       <div class="hud__brand" data-glitch="ZBK INC.">ZBK INC.</div>
       <div class="hud__title">APOLLO - MISSION CONTROL</div>
@@ -83,6 +173,9 @@ function createHud(app: HTMLElement): HudRefs {
   `;
 
   const viewport = app.querySelector<HTMLElement>("#viewport");
+  const hudPanel = app.querySelector<HTMLElement>(".hud");
+  const warningStripe = app.querySelector<HTMLElement>(".warning-stripe");
+  const hudToggleButton = app.querySelector<HTMLButtonElement>("#hud-visibility-toggle");
   const dateValue = app.querySelector<HTMLElement>("#hud-date");
   const scaleValue = app.querySelector<HTMLElement>("#hud-scale");
   const qualityValue = app.querySelector<HTMLElement>("#hud-quality");
@@ -93,6 +186,9 @@ function createHud(app: HTMLElement): HudRefs {
 
   if (
     !viewport ||
+    !hudPanel ||
+    !warningStripe ||
+    !hudToggleButton ||
     !dateValue ||
     !scaleValue ||
     !qualityValue ||
@@ -106,6 +202,9 @@ function createHud(app: HTMLElement): HudRefs {
 
   return {
     viewport,
+    hudPanel,
+    warningStripe,
+    hudToggleButton,
     dateValue,
     scaleValue,
     qualityValue,
@@ -220,6 +319,13 @@ async function bootstrap(): Promise<void> {
     engine.scene.add(runtimeBody.root);
   }
 
+  const sunRuntime = runtimeBodies.get("sun");
+  let sunCorona: SunCoronaRuntime | null = null;
+  if (sunRuntime) {
+    sunCorona = createSunCorona(sunRuntime.config.visualRadius);
+    sunRuntime.spinner.add(sunCorona.group);
+  }
+
   for (const config of BODY_LIST) {
     if (!config.orbit) {
       continue;
@@ -230,11 +336,9 @@ async function bootstrap(): Promise<void> {
 
     const parentRuntime = runtimeBodies.get(config.orbit.centralBody);
     if (parentRuntime) {
-      parentRuntime.root.add(orbitArc.segmentA);
-      parentRuntime.root.add(orbitArc.segmentB);
+      parentRuntime.root.add(orbitArc.line);
     } else {
-      engine.scene.add(orbitArc.segmentA);
-      engine.scene.add(orbitArc.segmentB);
+      engine.scene.add(orbitArc.line);
     }
   }
 
@@ -306,6 +410,18 @@ async function bootstrap(): Promise<void> {
   hud.releaseFocusButton.addEventListener("click", releaseFocus);
   updateFocusUi();
 
+  let hudHidden = false;
+  const setHudHidden = (hidden: boolean): void => {
+    hudHidden = hidden;
+    app.classList.toggle("hud-hidden", hidden);
+    hud.hudToggleButton.textContent = hidden ? "HUD: OFF (H)" : "HUD: ON (H)";
+  };
+
+  const onToggleHud = (): void => {
+    setHudHidden(!hudHidden);
+  };
+  hud.hudToggleButton.addEventListener("click", onToggleHud);
+
   let qualityChangeInProgress = false;
 
   const switchQuality = async (quality: QualityPreset): Promise<void> => {
@@ -363,6 +479,11 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
+    if (event.code === "KeyH") {
+      onToggleHud();
+      return;
+    }
+
     if (event.code === "Escape") {
       releaseFocus();
     }
@@ -387,6 +508,7 @@ async function bootstrap(): Promise<void> {
   let animationFrameId = 0;
   let smoothedFps = 60;
   let hudTimeAccumulator = 0;
+  let sunCoronaTime = 0;
 
   const animate = (): void => {
     animationFrameId = window.requestAnimationFrame(animate);
@@ -406,21 +528,18 @@ async function bootstrap(): Promise<void> {
     }
 
     for (const [bodyId, orbitArc] of orbitArcs) {
-      const bodyConfig = runtimeBodies.get(bodyId)?.config;
-      if (!bodyConfig?.orbit) {
-        continue;
-      }
-
       const trueAnomaly = snapshot.trueAnomaliesRad[bodyId] ?? 0;
-      const gapDegrees = bodyConfig.orbit.orbitGapDegrees ?? 0;
-      updateOrbitArc(
-        orbitArc,
-        trueAnomaly,
-        gapDegrees,
-        viewportWidth,
-        viewportHeight,
-        ORBIT_GAP_UPDATE_STEP_RAD,
-      );
+      updateOrbitArc(orbitArc, trueAnomaly);
+    }
+
+    if (sunCorona) {
+      sunCoronaTime += deltaSeconds;
+      sunCorona.materialPrimary.uniforms.uTime.value = sunCoronaTime;
+      sunCorona.materialSecondary.uniforms.uTime.value = sunCoronaTime + 1.7;
+      sunCorona.meshPrimary.rotation.y += deltaSeconds * 0.13;
+      sunCorona.meshPrimary.rotation.z += deltaSeconds * 0.03;
+      sunCorona.meshSecondary.rotation.y -= deltaSeconds * 0.1;
+      sunCorona.meshSecondary.rotation.x += deltaSeconds * 0.02;
     }
 
     if (focusState.focusLocked && focusState.focusedBodyId) {
@@ -467,16 +586,22 @@ async function bootstrap(): Promise<void> {
     window.removeEventListener("resize", onResize);
     window.removeEventListener("beforeunload", onBeforeUnload);
     hud.releaseFocusButton.removeEventListener("click", releaseFocus);
+    hud.hudToggleButton.removeEventListener("click", onToggleHud);
     controls.dispose();
     postProcessing.smaaPass.dispose();
     postProcessing.composer.dispose();
     engine.dispose();
 
     for (const orbitArc of orbitArcs.values()) {
-      orbitArc.segmentA.geometry.dispose();
-      orbitArc.segmentB.geometry.dispose();
-      orbitArc.segmentA.material.dispose();
-      orbitArc.segmentB.material.dispose();
+      orbitArc.geometry.dispose();
+      orbitArc.material.dispose();
+    }
+
+    if (sunCorona) {
+      (sunCorona.meshPrimary.geometry as THREE.BufferGeometry).dispose();
+      (sunCorona.meshSecondary.geometry as THREE.BufferGeometry).dispose();
+      sunCorona.materialPrimary.dispose();
+      sunCorona.materialSecondary.dispose();
     }
   };
 

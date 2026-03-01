@@ -105,19 +105,29 @@ function tuneMeshMaterial(mesh: THREE.Mesh, config: BodyVisualConfig): void {
         material.emissive = new THREE.Color("#FFFFFF");
         material.emissiveIntensity = 1.2;
       } else if (config.id === "sun") {
-        material.emissive = new THREE.Color("#F8642E");
-        material.emissiveIntensity = 0.35;
+        material.color = new THREE.Color("#FFD06A");
+        material.emissive = new THREE.Color("#FFCD59");
+        material.emissiveIntensity = 0.68;
+        material.roughness = 0.75;
+        material.metalness = 0;
       } else if (config.id === "mercury") {
+        material.color = new THREE.Color("#A89E90");
         material.emissive = new THREE.Color("#000000");
         material.emissiveIntensity = 0;
         material.metalness = 0;
-        material.roughness = Math.max(material.roughness, 0.92);
+        material.roughness = Math.max(material.roughness, 0.98);
       } else {
         material.emissive = new THREE.Color("#000000");
         material.emissiveIntensity = 0;
       }
 
-      material.envMapIntensity = config.id === "sun" ? 0.0 : 1.0;
+      if (config.id === "sun") {
+        material.envMapIntensity = 0;
+      } else if (config.id === "mercury") {
+        material.envMapIntensity = 0.18;
+      } else {
+        material.envMapIntensity = 1.0;
+      }
       material.needsUpdate = true;
     }
   };
@@ -146,9 +156,9 @@ function createFallbackSphere(config: BodyVisualConfig): THREE.Object3D {
   const geometry = new THREE.SphereGeometry(config.visualRadius, 48, 48);
   const material = new THREE.MeshStandardMaterial({
     color: new THREE.Color(config.color),
-    emissive: config.id === "sun" ? new THREE.Color("#F8642E") : new THREE.Color("#000000"),
-    emissiveIntensity: config.id === "sun" ? 0.35 : 0,
-    roughness: config.id === "sun" ? 0.5 : 0.92,
+    emissive: config.id === "sun" ? new THREE.Color("#FFCD59") : new THREE.Color("#000000"),
+    emissiveIntensity: config.id === "sun" ? 0.68 : 0,
+    roughness: config.id === "sun" ? 0.75 : 0.92,
     metalness: config.id === "sun" ? 0.0 : 0.02,
   });
   return new THREE.Mesh(geometry, material);
