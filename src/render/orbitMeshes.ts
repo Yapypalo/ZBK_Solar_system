@@ -10,6 +10,7 @@ const TAU = Math.PI * 2;
 const BASE_OPACITY = 0.72;
 const BASE_LINE_WIDTH = 1.35;
 const TRAIL_TOTAL_DEG = 329.0;
+const TERMINAL_FADE_START = 0.97;
 
 export interface OrbitArcRuntime {
   bodyId: BodyId;
@@ -125,7 +126,7 @@ export function createOrbitArcRuntime(
     basePointsScene[offset + 2] = scaled.z;
   });
 
-  const trailPointCount = Math.max(1024, samples);
+  const trailPointCount = Math.max(1536, samples);
   const { line, geometry, material } = createLine(color);
 
   return {
@@ -179,8 +180,10 @@ export function updateOrbitArc(
       }
     }
 
-    if (pointIndex >= runtime.trailPointCount - 2) {
-      fade = 0;
+    if (progress > TERMINAL_FADE_START) {
+      const terminalT = (progress - TERMINAL_FADE_START) / (1 - TERMINAL_FADE_START);
+      const terminalFade = 1 - smoothstep01(terminalT);
+      fade *= terminalFade;
     }
 
     runtime.trailColors[targetOffset] = fade;

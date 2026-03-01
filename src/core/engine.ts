@@ -1,6 +1,5 @@
 import * as THREE from "three";
-
-const MAX_PIXEL_RATIO = 2;
+import { getEffectivePixelRatio } from "../render/aaConfig";
 
 export interface EngineContext {
   scene: THREE.Scene;
@@ -39,7 +38,7 @@ export function createEngine(mount: HTMLElement): EngineContext {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.22;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
+  renderer.setPixelRatio(getEffectivePixelRatio(window.devicePixelRatio));
   renderer.setSize(initialWidth, initialHeight);
   mount.appendChild(renderer.domElement);
 
@@ -65,7 +64,7 @@ export function createEngine(mount: HTMLElement): EngineContext {
 
     camera.aspect = safeWidth / safeHeight;
     camera.updateProjectionMatrix();
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
+    renderer.setPixelRatio(getEffectivePixelRatio(window.devicePixelRatio));
     renderer.setSize(safeWidth, safeHeight);
   };
 

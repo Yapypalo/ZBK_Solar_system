@@ -55,7 +55,7 @@ export const ORBITAL_ELEMENTS: Record<OrbitingBodyId, OrbitElements> = {
   },
   moon: {
     epochJd: J2000_JD,
-    aKm: 884_399,
+    aKm: 384_399,
     e: 0.0549,
     iDeg: 5.145,
     raanDeg: 125.08,
@@ -63,7 +63,7 @@ export const ORBITAL_ELEMENTS: Record<OrbitingBodyId, OrbitElements> = {
     meanAnomalyDegAtEpoch: 115.3654,
     periodDays: 27.321661,
     centralBody: "earth",
-    orbitVisualScale: 6.5,
+    orbitVisualScale: 30,
     orbitGapDegrees: 45,
   },
   phobos: {

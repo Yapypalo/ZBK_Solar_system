@@ -4,6 +4,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { AA_MSAA_MAX_SAMPLES, getEffectivePixelRatio } from "./aaConfig";
 
 export interface PostProcessingPipeline {
   composer: EffectComposer;
@@ -19,12 +20,15 @@ export function createPostProcessing(
 ): PostProcessingPipeline {
   const renderSize = renderer.getSize(new THREE.Vector2());
   const supportsMsaa = renderer.capabilities.isWebGL2;
+  const msaaSamples = supportsMsaa
+    ? Math.min(renderer.capabilities.maxSamples ?? 4, AA_MSAA_MAX_SAMPLES)
+    : 0;
 
   const renderTarget = new THREE.WebGLRenderTarget(renderSize.x, renderSize.y, {
     type: THREE.HalfFloatType,
     depthBuffer: true,
     stencilBuffer: false,
-    samples: supportsMsaa ? 4 : 0,
+    samples: msaaSamples,
   });
 
   const composer = new EffectComposer(renderer, renderTarget);
@@ -42,7 +46,7 @@ export function createPostProcessing(
   composer.addPass(new OutputPass());
 
   const setSize = (width: number, height: number): void => {
-    composer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    composer.setPixelRatio(getEffectivePixelRatio(window.devicePixelRatio));
     composer.setSize(Math.max(1, width), Math.max(1, height));
   };
 
