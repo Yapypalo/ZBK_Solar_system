@@ -4,7 +4,7 @@
   --technical-white: #e9f2ff;
   --metal-silver: #9ca9bb;
   --space-black: #010208;
-  --panel-bg: rgba(4, 9, 20, 0.72);
+  --panel-bg: rgba(4, 9, 20, 0.54);
   --neon-cyan: #44e0ff;
 }
 
@@ -75,14 +75,14 @@ body {
   width: min(420px, calc(100vw - 36px));
   padding: 16px 18px 14px;
   background:
-    linear-gradient(132deg, rgba(15, 40, 88, 0.32), rgba(8, 20, 35, 0.72)),
+    linear-gradient(132deg, rgba(15, 40, 88, 0.44), rgba(8, 20, 35, 0.22)),
     var(--panel-bg);
-  border: 1px solid rgba(76, 167, 255, 0.48);
+  border: 1px solid rgba(76, 167, 255, 0.44);
   box-shadow:
-    0 0 0 1px rgba(252, 61, 33, 0.15) inset,
-    0 0 24px rgba(10, 94, 255, 0.14),
-    0 0 42px rgba(26, 213, 255, 0.08);
-  backdrop-filter: blur(6px);
+    0 0 0 1px rgba(252, 61, 33, 0.12) inset,
+    0 0 18px rgba(10, 94, 255, 0.11),
+    0 0 30px rgba(26, 213, 255, 0.06);
+  backdrop-filter: blur(5px);
 }
 
 .hud::before {
@@ -145,17 +145,17 @@ body {
 }
 
 .hud__row span:first-child {
-  color: var(--metal-silver);
+  color: #b7c6da;
 }
 
 .hud__row span:last-child {
-  color: var(--technical-white);
+  color: #f2f8ff;
 }
 
 .hud__hint {
   margin-top: 10px;
-  color: rgba(170, 208, 255, 0.86);
-  font-size: 0.69rem;
+  color: rgba(198, 223, 255, 0.92);
+  font-size: 0.7rem;
   font-family: "IBM Plex Mono", "Consolas", monospace;
 }
 
@@ -256,22 +256,22 @@ body {
   font-size: 0.7rem;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.11em;
-  color: #f3f8ff;
+  letter-spacing: 0.07em;
+  color: #f7fbff;
   border: 1px solid rgba(255, 205, 119, 0.84);
   text-shadow:
-    0 1px 0 rgba(0, 0, 0, 0.9),
-    0 0 9px rgba(255, 173, 90, 0.26);
+    0 1px 0 rgba(0, 0, 0, 0.95),
+    0 0 6px rgba(255, 186, 112, 0.18);
   background:
-    linear-gradient(rgba(5, 8, 14, 0.62), rgba(5, 8, 14, 0.62)),
+    linear-gradient(rgba(5, 8, 14, 0.5), rgba(5, 8, 14, 0.5)),
     repeating-linear-gradient(
     -45deg,
-    rgba(255, 176, 74, 0.94) 0 9px,
-    rgba(44, 35, 30, 0.98) 9px 18px
+    rgba(255, 176, 74, 0.7) 0 9px,
+    rgba(44, 35, 30, 0.82) 9px 18px
   );
   box-shadow:
-    0 0 14px rgba(255, 165, 95, 0.24),
-    0 0 0 1px rgba(255, 213, 146, 0.16) inset;
+    0 0 12px rgba(255, 165, 95, 0.16),
+    0 0 0 1px rgba(255, 213, 146, 0.12) inset;
 }
 
 .boot-error {
