@@ -129,7 +129,7 @@ export const BODY_CONFIGS: Record<BodyId, BodyVisualConfig> = {
     },
     color: "#8F8980",
     focusDistanceMultiplier: 14.5,
-    modelScaleMultiplier: 3,
+    modelScaleMultiplier: 1.3,
     satelliteVisualPriority: 3,
   },
 };

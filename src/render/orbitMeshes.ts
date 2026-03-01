@@ -9,7 +9,7 @@ import { degToRad, normalizeAngleRadians, sampleOrbitPointsKm } from "../sim/orb
 const TAU = Math.PI * 2;
 const BASE_OPACITY = 0.72;
 const BASE_LINE_WIDTH = 1.35;
-const TRAIL_TOTAL_DEG = 359.0;
+const TRAIL_TOTAL_DEG = 329.0;
 
 export interface OrbitArcRuntime {
   bodyId: BodyId;
