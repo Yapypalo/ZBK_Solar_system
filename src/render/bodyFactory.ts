@@ -36,7 +36,7 @@ function containsMesh(object: THREE.Object3D): boolean {
   return hasMesh;
 }
 
-function collectMeshes(root: THREE.Object3D): THREE.Mesh[] {
+function findDeimosTargetMesh(root: THREE.Object3D): THREE.Mesh | null {
   const meshes: THREE.Mesh[] = [];
   root.traverse((node) => {
     const mesh = node as THREE.Mesh;
@@ -44,47 +44,54 @@ function collectMeshes(root: THREE.Object3D): THREE.Mesh[] {
       meshes.push(mesh);
     }
   });
-  return meshes;
+
+  if (meshes.length === 0) {
+    return null;
+  }
+
+  return meshes.find((mesh) => mesh.name.toLowerCase().includes("deimos")) ?? meshes[0];
 }
 
-function pruneToTargetMeshPath(root: THREE.Object3D, target: THREE.Object3D): void {
-  const keepSet = new Set<THREE.Object3D>();
-  let cursor: THREE.Object3D | null = target;
-  while (cursor) {
-    keepSet.add(cursor);
-    if (cursor === root) {
-      break;
-    }
-    cursor = cursor.parent;
+function cloneMeshMaterial(
+  material: THREE.Material | THREE.Material[],
+): THREE.Material | THREE.Material[] {
+  if (Array.isArray(material)) {
+    return material.map((item) => item.clone());
   }
-
-  const visit = (node: THREE.Object3D): void => {
-    const children = [...node.children];
-    for (const child of children) {
-      if (!keepSet.has(child)) {
-        node.remove(child);
-        continue;
-      }
-      visit(child);
-    }
-  };
-
-  visit(root);
+  return material.clone();
 }
 
-function isolateDeimosMeshHierarchy(root: THREE.Object3D): void {
-  const meshes = collectMeshes(root);
-  if (meshes.length <= 1) {
-    return;
+function buildFlattenedDeimosGroup(targetMesh: THREE.Mesh): THREE.Group | null {
+  if (!targetMesh.geometry) {
+    return null;
   }
 
-  const byName = meshes.find((mesh) => mesh.name.toLowerCase().includes("deimos"));
-  const targetMesh = byName ?? meshes[0];
-  if (!targetMesh) {
-    return;
+  targetMesh.updateWorldMatrix(true, false);
+
+  const geometry = targetMesh.geometry.clone();
+  geometry.applyMatrix4(targetMesh.matrixWorld);
+  geometry.computeBoundingBox();
+
+  const bounds = geometry.boundingBox;
+  if (!bounds) {
+    return null;
   }
 
-  pruneToTargetMeshPath(root, targetMesh);
+  const center = new THREE.Vector3();
+  bounds.getCenter(center);
+  geometry.translate(-center.x, -center.y, -center.z);
+  geometry.computeBoundingSphere();
+
+  const flattenedMesh = new THREE.Mesh(
+    geometry,
+    cloneMeshMaterial(targetMesh.material),
+  );
+  flattenedMesh.name = targetMesh.name || "deimos-flattened";
+
+  const group = new THREE.Group();
+  group.name = "deimos-flattened-group";
+  group.add(flattenedMesh);
+  return group;
 }
 
 function tuneMeshMaterial(mesh: THREE.Mesh, config: BodyVisualConfig): void {
@@ -186,7 +193,7 @@ export async function createBodyVisual(
   quality: QualityPreset,
 ): Promise<BodyVisualResult> {
   const primaryPath = resolvePreferredPath(config, quality);
-  const visual = await loadFirstAvailableModel([
+  const loadedVisual = await loadFirstAvailableModel([
     primaryPath,
     config.modelPath1k,
     `/assets/models/${config.id}/${config.id}.glb`,
@@ -194,15 +201,22 @@ export async function createBodyVisual(
     `/assets/models/${config.id}/1k.glb`,
   ]);
 
-  if (!visual) {
+  if (!loadedVisual) {
     return {
       visual: createFallbackSphere(config),
       loadState: "error",
     };
   }
 
+  let visual = loadedVisual;
   if (config.id === "deimos") {
-    isolateDeimosMeshHierarchy(visual);
+    const targetMesh = findDeimosTargetMesh(loadedVisual);
+    if (targetMesh) {
+      const flattened = buildFlattenedDeimosGroup(targetMesh);
+      if (flattened) {
+        visual = flattened;
+      }
+    }
   }
 
   if (!containsMesh(visual)) {
