@@ -1,0 +1,304 @@
+:root {
+  --nasa-orange: #fc3d21;
+  --deep-blue: #0b3d91;
+  --technical-white: #e9f2ff;
+  --metal-silver: #9ca9bb;
+  --space-black: #010208;
+  --panel-bg: rgba(4, 9, 20, 0.72);
+  --neon-cyan: #44e0ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background: radial-gradient(circle at 20% 10%, #08132f 0%, #03040f 40%, #010106 100%);
+  color: var(--technical-white);
+  font-family: "Orbitron", "Rajdhani", "Segoe UI", sans-serif;
+  letter-spacing: 0.04em;
+}
+
+#app {
+  position: relative;
+}
+
+.viewport {
+  position: absolute;
+  inset: 0;
+}
+
+.hud {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  width: min(420px, calc(100vw - 36px));
+  padding: 16px 18px 14px;
+  background:
+    linear-gradient(132deg, rgba(15, 40, 88, 0.32), rgba(8, 20, 35, 0.72)),
+    var(--panel-bg);
+  border: 1px solid rgba(76, 167, 255, 0.48);
+  box-shadow:
+    0 0 0 1px rgba(252, 61, 33, 0.15) inset,
+    0 0 24px rgba(10, 94, 255, 0.14),
+    0 0 42px rgba(26, 213, 255, 0.08);
+  backdrop-filter: blur(6px);
+}
+
+.hud::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 7px;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(252, 61, 33, 0.9) 0 10px,
+    rgba(0, 0, 0, 0.88) 10px 20px
+  );
+}
+
+.hud__brand {
+  position: relative;
+  margin-top: 10px;
+  color: var(--nasa-orange);
+  font-size: 1.1rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  text-shadow: 0 0 10px rgba(252, 61, 33, 0.35);
+}
+
+.hud__brand::after {
+  content: attr(data-glitch);
+  position: absolute;
+  left: 1px;
+  top: 0;
+  color: rgba(68, 224, 255, 0.45);
+  clip-path: polygon(0 0, 100% 0, 100% 48%, 0 46%);
+  animation: glitch-scan 3.3s linear infinite;
+}
+
+.hud__title {
+  margin-top: 8px;
+  color: var(--technical-white);
+  font-size: 0.84rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.hud__stats {
+  margin-top: 12px;
+  padding: 11px 12px;
+  border: 1px solid rgba(68, 224, 255, 0.3);
+  background: rgba(6, 13, 29, 0.72);
+}
+
+.hud__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 0.77rem;
+  line-height: 1.7;
+}
+
+.hud__row span:first-child {
+  color: var(--metal-silver);
+}
+
+.hud__row span:last-child {
+  color: var(--technical-white);
+}
+
+.hud__hint {
+  margin-top: 10px;
+  color: rgba(170, 208, 255, 0.86);
+  font-size: 0.69rem;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+}
+
+.hud__section-title {
+  margin-top: 12px;
+  margin-bottom: 8px;
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  color: rgba(160, 198, 255, 0.86);
+}
+
+.body-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  max-height: 196px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.body-list__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid rgba(81, 154, 255, 0.44);
+  background: rgba(5, 11, 23, 0.86);
+  color: var(--technical-white);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 7px 8px;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.body-list__item:hover {
+  border-color: rgba(68, 224, 255, 0.85);
+  box-shadow: 0 0 0 1px rgba(68, 224, 255, 0.23) inset;
+}
+
+.body-list__item[data-active="true"] {
+  border-color: rgba(252, 61, 33, 0.86);
+  box-shadow:
+    0 0 0 1px rgba(252, 61, 33, 0.28) inset,
+    0 0 10px rgba(252, 61, 33, 0.22);
+  transform: translateY(-1px);
+}
+
+.body-list__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+
+.body-list__status {
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  color: rgba(169, 190, 221, 0.95);
+}
+
+.body-list__item[data-model-state="loaded"] .body-list__status {
+  color: #72f0b9;
+}
+
+.body-list__item[data-model-state="fallback"] .body-list__status {
+  color: #ffd07f;
+}
+
+.body-list__item[data-model-state="error"] .body-list__status {
+  color: #ff8c8c;
+}
+
+.hud__release {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(252, 61, 33, 0.6);
+  background: rgba(30, 9, 7, 0.86);
+  color: var(--technical-white);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+
+.hud__release:hover {
+  border-color: rgba(255, 157, 133, 0.95);
+  box-shadow: 0 0 0 1px rgba(255, 112, 78, 0.35) inset;
+}
+
+.warning-stripe {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  padding: 8px 12px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: #080808;
+  border: 1px solid rgba(255, 200, 105, 0.65);
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 176, 74, 0.94) 0 9px,
+    rgba(44, 35, 30, 0.98) 9px 18px
+  );
+  box-shadow: 0 0 14px rgba(255, 165, 95, 0.24);
+}
+
+.boot-error {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  color: var(--technical-white);
+  font-family: "Orbitron", "Rajdhani", "Segoe UI", sans-serif;
+}
+
+.boot-error h1 {
+  margin: 0;
+  color: var(--nasa-orange);
+  letter-spacing: 0.12em;
+}
+
+.boot-error p {
+  margin: 0;
+  color: rgba(219, 233, 255, 0.92);
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+}
+
+@keyframes glitch-scan {
+  0% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  5% {
+    opacity: 0.85;
+    transform: translate(1px, 0);
+  }
+  8% {
+    transform: translate(-1px, 0);
+  }
+  10% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+}
+
+@media (max-width: 820px) {
+  .hud {
+    top: 10px;
+    left: 10px;
+    width: min(380px, calc(100vw - 20px));
+    padding: 14px 14px 12px;
+  }
+
+  .body-list {
+    grid-template-columns: 1fr;
+    max-height: 158px;
+  }
+
+  .warning-stripe {
+    right: 10px;
+    bottom: 10px;
+    max-width: calc(100vw - 20px);
+    text-align: center;
+  }
+}
