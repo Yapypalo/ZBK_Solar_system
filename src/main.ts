@@ -62,6 +62,7 @@ interface FocusTransitionState {
 interface HudRefs {
   viewport: HTMLElement;
   hudPanel: HTMLElement;
+  hudPanelToggleButton: HTMLButtonElement;
   cardRoot: HTMLElement;
   cardKind: HTMLElement;
   cardTitle: HTMLElement;
@@ -98,8 +99,11 @@ function createHud(app: HTMLElement): HudRefs {
     <div id="viewport" class="viewport"></div>
     <button id="hud-visibility-toggle" type="button" class="hud-visibility-toggle">HUD: ON (H)</button>
     <aside class="hud">
-      <div class="hud__brand" data-glitch="ZBK INC.">ZBK INC.</div>
-      <div class="hud__title">ZBK &middot; ORBITAL ARCHIVE</div>
+      <div class="hud__header">
+        <div class="hud__brand" data-glitch="ZBK INC.">ZBK INC.</div>
+        <button id="hud-panel-toggle" type="button" class="hud__panel-toggle">PANEL: FULL</button>
+      </div>
+      <div class="hud__title">ORBITAL ARCHIVE</div>
       <div class="hud__stats">
         <div class="hud__row"><span>UTC</span><span id="hud-date">--</span></div>
         <div class="hud__row"><span>TIME SCALE</span><span id="hud-scale">1 day/s</span></div>
@@ -124,6 +128,7 @@ function createHud(app: HTMLElement): HudRefs {
 
   const viewport = app.querySelector<HTMLElement>("#viewport");
   const hudPanel = app.querySelector<HTMLElement>(".hud");
+  const hudPanelToggleButton = app.querySelector<HTMLButtonElement>("#hud-panel-toggle");
   const cardRoot = app.querySelector<HTMLElement>("#body-card");
   const cardKind = app.querySelector<HTMLElement>("#card-kind");
   const cardTitle = app.querySelector<HTMLElement>("#card-title");
@@ -142,6 +147,7 @@ function createHud(app: HTMLElement): HudRefs {
   if (
     !viewport ||
     !hudPanel ||
+    !hudPanelToggleButton ||
     !cardRoot ||
     !cardKind ||
     !cardTitle ||
@@ -163,6 +169,7 @@ function createHud(app: HTMLElement): HudRefs {
   return {
     viewport,
     hudPanel,
+    hudPanelToggleButton,
     cardRoot,
     cardKind,
     cardTitle,
@@ -543,6 +550,18 @@ async function bootstrap(): Promise<void> {
   setCardVisible(false);
   updateFocusUi();
 
+  let hudPanelCollapsed = false;
+  const setHudPanelCollapsed = (collapsed: boolean): void => {
+    hudPanelCollapsed = collapsed;
+    hud.hudPanel.classList.toggle("hud--collapsed", collapsed);
+    hud.hudPanelToggleButton.textContent = collapsed ? "PANEL: COMPACT" : "PANEL: FULL";
+  };
+
+  const onToggleHudPanel = (): void => {
+    setHudPanelCollapsed(!hudPanelCollapsed);
+  };
+  hud.hudPanelToggleButton.addEventListener("click", onToggleHudPanel);
+
   let hudHidden = false;
   let hudToggleHideTimer: number | null = null;
 
@@ -817,6 +836,7 @@ async function bootstrap(): Promise<void> {
     window.removeEventListener("pointerdown", onGlobalPointerDown);
     window.removeEventListener("beforeunload", onBeforeUnload);
     hud.releaseFocusButton.removeEventListener("click", releaseFocus);
+    hud.hudPanelToggleButton.removeEventListener("click", onToggleHudPanel);
     hud.hudToggleButton.removeEventListener("click", onToggleHud);
     rendererDomElement.removeEventListener("pointerdown", onPointerDown);
     rendererDomElement.removeEventListener("pointerup", onPointerUp);
@@ -848,5 +868,3 @@ void bootstrap().catch((error: unknown) => {
 
   console.error(error);
 });
-
-
