@@ -59,6 +59,7 @@ export const ORBITAL_ELEMENTS: Record<OrbitingBodyId, OrbitElements> = {
     meanAnomalyDegAtEpoch: 115.3654,
     periodDays: 27.321661,
     centralBody: "earth",
+    orbitVisualScale: 3.5,
   },
   phobos: {
     epochJd: J2000_JD,
@@ -70,7 +71,7 @@ export const ORBITAL_ELEMENTS: Record<OrbitingBodyId, OrbitElements> = {
     meanAnomalyDegAtEpoch: 210.0,
     periodDays: 0.31891,
     centralBody: "mars",
-    orbitVisualScale: 120,
+    orbitVisualScale: 160,
   },
   deimos: {
     epochJd: J2000_JD,
@@ -82,6 +83,6 @@ export const ORBITAL_ELEMENTS: Record<OrbitingBodyId, OrbitElements> = {
     meanAnomalyDegAtEpoch: 45.0,
     periodDays: 1.26244,
     centralBody: "mars",
-    orbitVisualScale: 120,
+    orbitVisualScale: 160,
   },
 };

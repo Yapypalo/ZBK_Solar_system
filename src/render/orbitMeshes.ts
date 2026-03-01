@@ -1,47 +1,58 @@
 import * as THREE from "three";
+import { Line2 } from "three/examples/jsm/lines/Line2.js";
+import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
+import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import type { OrbitElements } from "../types";
 import { KM_PER_SCENE_UNIT } from "../sim/constants";
 import { sampleOrbitPointsKm } from "../sim/orbitMath";
 
 export interface OrbitVisualHandle {
-  mesh: THREE.Mesh<THREE.TubeGeometry, THREE.MeshBasicMaterial>;
-  material: THREE.MeshBasicMaterial;
-}
-
-function getOrbitTubeRadius(orbit: OrbitElements): number {
-  const scaledSemiMajorAxis = orbit.aKm / KM_PER_SCENE_UNIT;
-  return THREE.MathUtils.clamp(scaledSemiMajorAxis * 0.00028, 0.0014, 0.008);
+  mesh: Line2;
+  material: LineMaterial;
 }
 
 export function createOrbitVisual(
   orbit: OrbitElements,
   color: THREE.ColorRepresentation,
-  segments = 512,
+  segments = 1024,
 ): OrbitVisualHandle {
   const pointsKm = sampleOrbitPointsKm(orbit, segments);
-  const pointsScene = pointsKm.map((point) => point.multiplyScalar(1 / KM_PER_SCENE_UNIT));
+  const positions: number[] = [];
 
-  const curve = new THREE.CatmullRomCurve3(pointsScene, true, "catmullrom", 0.02);
-  const geometry = new THREE.TubeGeometry(
-    curve,
-    segments * 2,
-    getOrbitTubeRadius(orbit),
-    12,
-    true,
-  );
+  for (const point of pointsKm) {
+    point.multiplyScalar(1 / KM_PER_SCENE_UNIT);
+    positions.push(point.x, point.y, point.z);
+  }
 
-  const material = new THREE.MeshBasicMaterial({
+  const geometry = new LineGeometry();
+  geometry.setPositions(positions);
+
+  const material = new LineMaterial({
     color,
+    linewidth: 1.35,
     transparent: true,
-    opacity: 0.62,
+    opacity: 0.82,
     depthWrite: false,
+    depthTest: false,
     toneMapped: false,
-    blending: THREE.NormalBlending,
+    worldUnits: false,
+    dashed: false,
+    alphaToCoverage: true,
   });
+  material.resolution.set(window.innerWidth, window.innerHeight);
 
-  const mesh = new THREE.Mesh(geometry, material);
+  const mesh = new Line2(geometry, material);
+  mesh.computeLineDistances();
   mesh.frustumCulled = false;
   mesh.renderOrder = 1;
 
   return { mesh, material };
+}
+
+export function setOrbitVisualResolution(
+  orbit: OrbitVisualHandle,
+  width: number,
+  height: number,
+): void {
+  orbit.material.resolution.set(Math.max(1, width), Math.max(1, height));
 }

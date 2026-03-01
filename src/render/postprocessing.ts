@@ -32,9 +32,9 @@ export function createPostProcessing(
 
   const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
-    0.1,
-    0.2,
-    1.05,
+    0.04,
+    0.16,
+    1.2,
   );
   composer.addPass(bloomPass);
   const smaaPass = new SMAAPass();

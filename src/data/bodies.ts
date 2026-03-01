@@ -1,7 +1,7 @@
 import type { BodyId, BodyVisualConfig } from "../types";
 import { ORBITAL_ELEMENTS } from "./orbitalElements";
 
-export const BODY_VISUAL_SCALE = 2.6;
+export const BODY_VISUAL_SCALE = 2.1;
 
 export const BODY_IDS: BodyId[] = [
   "sun",
@@ -27,7 +27,7 @@ export const BODY_CONFIGS: Record<BodyId, BodyVisualConfig> = {
       rotationPeriodHours: 609.12,
     },
     color: "#FCB15A",
-    focusDistanceMultiplier: 1.55,
+    focusDistanceMultiplier: 1.45,
   },
   mercury: {
     id: "mercury",
@@ -41,7 +41,7 @@ export const BODY_CONFIGS: Record<BodyId, BodyVisualConfig> = {
       rotationPeriodHours: 1407.6,
     },
     color: "#A4A6A8",
-    focusDistanceMultiplier: 13.2,
+    focusDistanceMultiplier: 11.4,
   },
   venus: {
     id: "venus",
@@ -56,7 +56,7 @@ export const BODY_CONFIGS: Record<BodyId, BodyVisualConfig> = {
       retrograde: true,
     },
     color: "#CFB46F",
-    focusDistanceMultiplier: 11.5,
+    focusDistanceMultiplier: 10.4,
   },
   earth: {
     id: "earth",
@@ -70,7 +70,7 @@ export const BODY_CONFIGS: Record<BodyId, BodyVisualConfig> = {
       rotationPeriodHours: 23.934,
     },
     color: "#6CA0FF",
-    focusDistanceMultiplier: 11.5,
+    focusDistanceMultiplier: 10.2,
   },
   mars: {
     id: "mars",
@@ -84,7 +84,7 @@ export const BODY_CONFIGS: Record<BodyId, BodyVisualConfig> = {
       rotationPeriodHours: 24.623,
     },
     color: "#C17054",
-    focusDistanceMultiplier: 12,
+    focusDistanceMultiplier: 10.8,
   },
   moon: {
     id: "moon",
@@ -98,7 +98,7 @@ export const BODY_CONFIGS: Record<BodyId, BodyVisualConfig> = {
       rotationPeriodHours: 655.728,
     },
     color: "#BDC0C5",
-    focusDistanceMultiplier: 15,
+    focusDistanceMultiplier: 12.5,
   },
   phobos: {
     id: "phobos",
@@ -112,21 +112,21 @@ export const BODY_CONFIGS: Record<BodyId, BodyVisualConfig> = {
       rotationPeriodHours: 7.66,
     },
     color: "#A99A85",
-    focusDistanceMultiplier: 18.5,
+    focusDistanceMultiplier: 13.5,
   },
   deimos: {
     id: "deimos",
     name: "Deimos",
     modelPath1k: "/assets/models/deimos/deimos.glb",
     modelPath4k: "/assets/models/deimos/4k.glb",
-    visualRadius: 0.075 * BODY_VISUAL_SCALE,
+    visualRadius: 0.085 * BODY_VISUAL_SCALE,
     orbit: ORBITAL_ELEMENTS.deimos,
     spin: {
       axialTiltDeg: 0.0,
       rotationPeriodHours: 30.35,
     },
     color: "#8F8980",
-    focusDistanceMultiplier: 19,
+    focusDistanceMultiplier: 14.5,
   },
 };
 

@@ -10,14 +10,18 @@ export function normalizeModelToRadius(root: THREE.Object3D, targetRadius: numbe
     return;
   }
 
-  const sphere = new THREE.Sphere();
-  box.getBoundingSphere(sphere);
-  if (sphere.radius < EPSILON) {
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+
+  const halfMaxExtent = Math.max(size.x, size.y, size.z) * 0.5;
+  if (halfMaxExtent < EPSILON) {
     return;
   }
 
-  root.position.sub(sphere.center);
-  const scale = targetRadius / sphere.radius;
+  root.position.sub(center);
+  const scale = targetRadius / halfMaxExtent;
   root.scale.multiplyScalar(scale);
   root.updateMatrixWorld(true);
 }

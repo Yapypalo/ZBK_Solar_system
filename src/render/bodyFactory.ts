@@ -39,17 +39,17 @@ function containsMesh(object: THREE.Object3D): boolean {
 function tuneMeshMaterial(mesh: THREE.Mesh, config: BodyVisualConfig): void {
   const applyTuning = (material: THREE.Material): void => {
     if (material instanceof THREE.MeshStandardMaterial) {
-      material.roughness = config.id === "sun" ? 0.38 : Math.min(material.roughness, 0.96);
-      material.metalness = config.id === "sun" ? 0.01 : Math.min(material.metalness, 0.06);
+      material.roughness = config.id === "sun" ? 0.45 : Math.min(material.roughness, 0.92);
+      material.metalness = config.id === "sun" ? 0.0 : Math.min(material.metalness, 0.04);
       material.color = material.map ? new THREE.Color("#FFFFFF") : new THREE.Color(config.color);
       if (config.id === "sun") {
         material.emissive = new THREE.Color("#F8642E");
-        material.emissiveIntensity = 0.62;
+        material.emissiveIntensity = 0.4;
       } else {
-        material.emissive = new THREE.Color(config.color).multiplyScalar(0.03);
-        material.emissiveIntensity = 0.2;
+        material.emissive = new THREE.Color("#000000");
+        material.emissiveIntensity = 0;
       }
-      material.envMapIntensity = config.id === "sun" ? 0.2 : 0.8;
+      material.envMapIntensity = config.id === "sun" ? 0.0 : 1.0;
       material.needsUpdate = true;
     }
   };
@@ -79,25 +79,11 @@ function createFallbackSphere(config: BodyVisualConfig): THREE.Object3D {
   const material = new THREE.MeshStandardMaterial({
     color: new THREE.Color(config.color),
     emissive: config.id === "sun" ? new THREE.Color("#F8642E") : new THREE.Color("#000000"),
-    emissiveIntensity: config.id === "sun" ? 0.55 : 0,
-    roughness: config.id === "sun" ? 0.4 : 0.88,
-    metalness: config.id === "sun" ? 0.0 : 0.04,
+    emissiveIntensity: config.id === "sun" ? 0.35 : 0,
+    roughness: config.id === "sun" ? 0.5 : 0.92,
+    metalness: config.id === "sun" ? 0.0 : 0.02,
   });
   return new THREE.Mesh(geometry, material);
-}
-
-function createSunGlowShell(radius: number): THREE.Mesh {
-  const glowGeometry = new THREE.SphereGeometry(radius * 1.16, 40, 40);
-  const glowMaterial = new THREE.MeshBasicMaterial({
-    color: new THREE.Color("#FD7F40"),
-    transparent: true,
-    opacity: 0.16,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    toneMapped: false,
-    side: THREE.BackSide,
-  });
-  return new THREE.Mesh(glowGeometry, glowMaterial);
 }
 
 function resolvePreferredPath(config: BodyVisualConfig, quality: QualityPreset): string {
@@ -169,15 +155,5 @@ export async function createBodyVisual(
     visual.rotation.set(degToRad(xDeg), degToRad(yDeg), degToRad(zDeg));
   }
 
-  if (config.id !== "sun") {
-    return { visual, loadState: "loaded" };
-  }
-
-  const wrapper = new THREE.Group();
-  wrapper.add(visual);
-  wrapper.add(createSunGlowShell(config.visualRadius));
-  return {
-    visual: wrapper,
-    loadState: "loaded",
-  };
+  return { visual, loadState: "loaded" };
 }

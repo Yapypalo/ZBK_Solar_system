@@ -3,7 +3,11 @@ import { createSolarControls } from "./core/controls";
 import { createEngine } from "./core/engine";
 import { BODY_IDS, BODY_LIST } from "./data/bodies";
 import { createBodyVisual } from "./render/bodyFactory";
-import { createOrbitVisual, type OrbitVisualHandle } from "./render/orbitMeshes";
+import {
+  createOrbitVisual,
+  setOrbitVisualResolution,
+  type OrbitVisualHandle,
+} from "./render/orbitMeshes";
 import { createPostProcessing } from "./render/postprocessing";
 import { createStarfield } from "./render/starfield";
 import { degToRad } from "./sim/orbitMath";
@@ -224,7 +228,7 @@ async function bootstrap(): Promise<void> {
       continue;
     }
 
-    const orbitVisual = createOrbitVisual(config.orbit, config.color, 640);
+    const orbitVisual = createOrbitVisual(config.orbit, config.color, 1024);
     orbitVisuals.push(orbitVisual);
 
     const parentRuntime = runtimeBodies.get(config.orbit.centralBody);
@@ -381,6 +385,9 @@ async function bootstrap(): Promise<void> {
     const height = hud.viewport.clientHeight || window.innerHeight;
     engine.setSize(width, height);
     postProcessing.setSize(width, height);
+    for (const orbitVisual of orbitVisuals) {
+      setOrbitVisualResolution(orbitVisual, width, height);
+    }
   };
 
   window.addEventListener("resize", onResize);

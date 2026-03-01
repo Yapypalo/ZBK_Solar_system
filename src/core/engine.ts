@@ -18,8 +18,8 @@ export function createEngine(mount: HTMLElement): EngineContext {
   const initialWidth = mount.clientWidth || window.innerWidth;
   const initialHeight = mount.clientHeight || window.innerHeight;
 
-  const camera = new THREE.PerspectiveCamera(43, initialWidth / initialHeight, 0.01, 8_000);
-  camera.position.set(0, 30, 118);
+  const camera = new THREE.PerspectiveCamera(42, initialWidth / initialHeight, 0.01, 8_000);
+  camera.position.set(0, 22, 92);
 
   const renderer = new THREE.WebGLRenderer({
     antialias: true,
@@ -38,22 +38,22 @@ export function createEngine(mount: HTMLElement): EngineContext {
   }
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.08;
+  renderer.toneMappingExposure = 1.22;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
   renderer.setSize(initialWidth, initialHeight);
   mount.appendChild(renderer.domElement);
 
-  const ambientLight = new THREE.AmbientLight("#C2D8FF", 0.07);
+  const ambientLight = new THREE.AmbientLight("#AFC8F0", 0.02);
   scene.add(ambientLight);
 
-  const hemisphereLight = new THREE.HemisphereLight("#AFCBF5", "#090F19", 0.12);
+  const hemisphereLight = new THREE.HemisphereLight("#AFCBF5", "#060B13", 0.04);
   scene.add(hemisphereLight);
 
-  const solarLight = new THREE.PointLight("#FFF2D6", 520, 0, 2);
+  const solarLight = new THREE.PointLight("#FFF5E3", 280_000, 0, 2);
   solarLight.position.set(0, 0, 0);
   scene.add(solarLight);
 
-  const rimLight = new THREE.DirectionalLight("#7FA7FF", 0.2);
+  const rimLight = new THREE.DirectionalLight("#7FA7FF", 0.06);
   rimLight.position.set(-220, 80, -130);
   scene.add(rimLight);
 
