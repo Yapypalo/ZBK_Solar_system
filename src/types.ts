@@ -22,6 +22,7 @@ export interface OrbitElements {
   periodDays: number;
   centralBody: BodyId;
   orbitVisualScale?: number;
+  orbitGapDegrees?: number;
 }
 
 export interface SpinConfig {
@@ -41,6 +42,8 @@ export interface BodyVisualConfig {
   color: string;
   orientationOffsetDeg?: [number, number, number];
   focusDistanceMultiplier?: number;
+  modelScaleMultiplier?: number;
+  satelliteVisualPriority?: number;
 }
 
 export interface SimulationState {

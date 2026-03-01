@@ -24,4 +24,16 @@ export function normalizeModelToRadius(root: THREE.Object3D, targetRadius: numbe
   const scale = targetRadius / halfMaxExtent;
   root.scale.multiplyScalar(scale);
   root.updateMatrixWorld(true);
+
+  const correctedBox = new THREE.Box3().setFromObject(root);
+  if (correctedBox.isEmpty()) {
+    return;
+  }
+
+  const correctedCenter = new THREE.Vector3();
+  correctedBox.getCenter(correctedCenter);
+  if (correctedCenter.lengthSq() > 1e-8) {
+    root.position.sub(correctedCenter);
+    root.updateMatrixWorld(true);
+  }
 }

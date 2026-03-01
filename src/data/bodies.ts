@@ -75,7 +75,7 @@ export const BODY_CONFIGS: Record<BodyId, BodyVisualConfig> = {
   mars: {
     id: "mars",
     name: "Mars",
-    modelPath1k: "/assets/models/mars/mars.glb",
+    modelPath1k: "/assets/models/mars/mars-pbr.glb",
     modelPath4k: "/assets/models/mars/4k.glb",
     visualRadius: 0.34 * BODY_VISUAL_SCALE,
     orbit: ORBITAL_ELEMENTS.mars,
@@ -99,6 +99,7 @@ export const BODY_CONFIGS: Record<BodyId, BodyVisualConfig> = {
     },
     color: "#BDC0C5",
     focusDistanceMultiplier: 12.5,
+    satelliteVisualPriority: 1,
   },
   phobos: {
     id: "phobos",
@@ -113,6 +114,7 @@ export const BODY_CONFIGS: Record<BodyId, BodyVisualConfig> = {
     },
     color: "#A99A85",
     focusDistanceMultiplier: 13.5,
+    satelliteVisualPriority: 2,
   },
   deimos: {
     id: "deimos",
@@ -127,6 +129,8 @@ export const BODY_CONFIGS: Record<BodyId, BodyVisualConfig> = {
     },
     color: "#8F8980",
     focusDistanceMultiplier: 14.5,
+    modelScaleMultiplier: 3,
+    satelliteVisualPriority: 3,
   },
 };
 

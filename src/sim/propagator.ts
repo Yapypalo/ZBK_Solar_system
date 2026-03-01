@@ -3,7 +3,7 @@ import { J2000_JD } from "../data/orbitalElements";
 import type { BodyVisualConfig, BodyId } from "../types";
 import { KM_PER_SCENE_UNIT } from "./constants";
 import {
-  getRelativeOrbitalPositionKm,
+  getOrbitalState,
   julianDateFromDate,
   normalizeAngleRadians,
 } from "./orbitMath";
@@ -12,6 +12,7 @@ export interface PropagationSnapshot {
   julianDate: number;
   positionsScene: Record<BodyId, THREE.Vector3>;
   spinAnglesRad: Record<BodyId, number>;
+  trueAnomaliesRad: Partial<Record<BodyId, number>>;
 }
 
 export function propagateSystem(
@@ -24,6 +25,7 @@ export function propagateSystem(
   );
   const resolving = new Set<BodyId>();
   const positionsKm = new Map<BodyId, THREE.Vector3>();
+  const trueAnomaliesRad: Partial<Record<BodyId, number>> = {};
   const sceneScale = 1 / KM_PER_SCENE_UNIT;
 
   const resolvePositionKm = (id: BodyId): THREE.Vector3 => {
@@ -46,7 +48,9 @@ export function propagateSystem(
     let position = new THREE.Vector3(0, 0, 0);
     if (body.orbit) {
       const parent = resolvePositionKm(body.orbit.centralBody);
-      const relative = getRelativeOrbitalPositionKm(body.orbit, julianDate);
+      const orbitalState = getOrbitalState(body.orbit, julianDate);
+      const relative = orbitalState.positionKm;
+      trueAnomaliesRad[id] = orbitalState.trueAnomalyRad;
       position = parent.add(relative);
     }
 
@@ -67,5 +71,5 @@ export function propagateSystem(
     spinAnglesRad[body.id] = normalizeAngleRadians(direction * turns * Math.PI * 2);
   }
 
-  return { julianDate, positionsScene, spinAnglesRad };
+  return { julianDate, positionsScene, spinAnglesRad, trueAnomaliesRad };
 }

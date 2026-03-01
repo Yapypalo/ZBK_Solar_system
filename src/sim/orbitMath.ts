@@ -1,6 +1,11 @@
 import * as THREE from "three";
 import type { OrbitElements } from "../types";
 
+export interface OrbitalState {
+  positionKm: THREE.Vector3;
+  trueAnomalyRad: number;
+}
+
 export function degToRad(degrees: number): number {
   return (degrees * Math.PI) / 180;
 }
@@ -59,6 +64,13 @@ export function getRelativeOrbitalPositionKm(
   elements: OrbitElements,
   julianDate: number,
 ): THREE.Vector3 {
+  return getOrbitalState(elements, julianDate).positionKm;
+}
+
+export function getOrbitalState(
+  elements: OrbitElements,
+  julianDate: number,
+): OrbitalState {
   const orbitVisualScale = elements.orbitVisualScale ?? 1;
   const elapsedDays = julianDate - elements.epochJd;
   const meanMotion = (Math.PI * 2) / elements.periodDays;
@@ -76,13 +88,16 @@ export function getRelativeOrbitalPositionKm(
   const radiusKm =
     elements.aKm * (1 - elements.e * Math.cos(eccentricAnomaly)) * orbitVisualScale;
 
-  return orbitalPlaneTo3D(
-    radiusKm,
-    trueAnomaly,
-    degToRad(elements.argPeriapsisDeg),
-    degToRad(elements.iDeg),
-    degToRad(elements.raanDeg),
-  );
+  return {
+    positionKm: orbitalPlaneTo3D(
+      radiusKm,
+      trueAnomaly,
+      degToRad(elements.argPeriapsisDeg),
+      degToRad(elements.iDeg),
+      degToRad(elements.raanDeg),
+    ),
+    trueAnomalyRad: normalizeAngleRadians(trueAnomaly),
+  };
 }
 
 export function sampleOrbitPointsKm(

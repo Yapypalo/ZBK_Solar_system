@@ -39,16 +39,26 @@ function containsMesh(object: THREE.Object3D): boolean {
 function tuneMeshMaterial(mesh: THREE.Mesh, config: BodyVisualConfig): void {
   const applyTuning = (material: THREE.Material): void => {
     if (material instanceof THREE.MeshStandardMaterial) {
-      material.roughness = config.id === "sun" ? 0.45 : Math.min(material.roughness, 0.92);
-      material.metalness = config.id === "sun" ? 0.0 : Math.min(material.metalness, 0.04);
+      material.roughness = config.id === "sun" ? 0.55 : Math.min(material.roughness, 0.95);
+      material.metalness = config.id === "sun" ? 0.0 : Math.min(material.metalness, 0.12);
       material.color = material.map ? new THREE.Color("#FFFFFF") : new THREE.Color(config.color);
-      if (config.id === "sun") {
+
+      if (config.id === "earth" && material.emissiveMap) {
+        material.emissive = new THREE.Color("#FFFFFF");
+        material.emissiveIntensity = 1.2;
+      } else if (config.id === "sun") {
         material.emissive = new THREE.Color("#F8642E");
-        material.emissiveIntensity = 0.4;
+        material.emissiveIntensity = 0.35;
+      } else if (config.id === "mercury") {
+        material.emissive = new THREE.Color("#000000");
+        material.emissiveIntensity = 0;
+        material.metalness = 0;
+        material.roughness = Math.max(material.roughness, 0.92);
       } else {
         material.emissive = new THREE.Color("#000000");
         material.emissiveIntensity = 0;
       }
+
       material.envMapIntensity = config.id === "sun" ? 0.0 : 1.0;
       material.needsUpdate = true;
     }
@@ -149,6 +159,9 @@ export async function createBodyVisual(
 
   applyVisualTuning(visual, config);
   normalizeModelToRadius(visual, config.visualRadius);
+  if (config.modelScaleMultiplier && config.modelScaleMultiplier > 0) {
+    visual.scale.multiplyScalar(config.modelScaleMultiplier);
+  }
 
   if (config.orientationOffsetDeg) {
     const [xDeg, yDeg, zDeg] = config.orientationOffsetDeg;

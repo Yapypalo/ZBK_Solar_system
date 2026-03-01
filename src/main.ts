@@ -4,9 +4,10 @@ import { createEngine } from "./core/engine";
 import { BODY_IDS, BODY_LIST } from "./data/bodies";
 import { createBodyVisual } from "./render/bodyFactory";
 import {
-  createOrbitVisual,
+  createOrbitArcRuntime,
   setOrbitVisualResolution,
-  type OrbitVisualHandle,
+  updateOrbitArc,
+  type OrbitArcRuntime,
 } from "./render/orbitMeshes";
 import { createPostProcessing } from "./render/postprocessing";
 import { createStarfield } from "./render/starfield";
@@ -20,6 +21,8 @@ import type {
   QualityPreset,
 } from "./types";
 import "./styles/theme.css";
+
+const ORBIT_GAP_UPDATE_STEP_RAD = degToRad(0.15);
 
 interface RuntimeBody {
   config: BodyVisualConfig;
@@ -35,19 +38,10 @@ interface BodyButtonEntry {
   status: HTMLSpanElement;
 }
 
-interface FocusTransitionState {
-  active: boolean;
-  elapsed: number;
-  duration: number;
-  startCamera: THREE.Vector3;
-  startTarget: THREE.Vector3;
-}
-
 interface FocusRuntimeState {
   focusedBodyId: BodyId | null;
   focusLocked: boolean;
-  focusOffset: THREE.Vector3;
-  focusTransition: FocusTransitionState;
+  lastFocusedWorldPosition: THREE.Vector3 | null;
 }
 
 interface HudRefs {
@@ -207,11 +201,14 @@ async function bootstrap(): Promise<void> {
   });
 
   const runtimeBodies = new Map<BodyId, RuntimeBody>();
-  const orbitVisuals: OrbitVisualHandle[] = [];
+  const orbitArcs = new Map<BodyId, OrbitArcRuntime>();
   const latestPositions = {} as Record<BodyId, THREE.Vector3>;
   for (const bodyId of BODY_IDS) {
     latestPositions[bodyId] = new THREE.Vector3();
   }
+
+  let viewportWidth = hud.viewport.clientWidth || window.innerWidth;
+  let viewportHeight = hud.viewport.clientHeight || window.innerHeight;
 
   const initialQuality = simClock.getState().quality;
   const runtimeBodyList = await Promise.all(
@@ -228,28 +225,23 @@ async function bootstrap(): Promise<void> {
       continue;
     }
 
-    const orbitVisual = createOrbitVisual(config.orbit, config.color, 1024);
-    orbitVisuals.push(orbitVisual);
+    const orbitArc = createOrbitArcRuntime(config.id, config.orbit, config.color, 1440);
+    orbitArcs.set(config.id, orbitArc);
 
     const parentRuntime = runtimeBodies.get(config.orbit.centralBody);
     if (parentRuntime) {
-      parentRuntime.root.add(orbitVisual.mesh);
+      parentRuntime.root.add(orbitArc.segmentA);
+      parentRuntime.root.add(orbitArc.segmentB);
     } else {
-      engine.scene.add(orbitVisual.mesh);
+      engine.scene.add(orbitArc.segmentA);
+      engine.scene.add(orbitArc.segmentB);
     }
   }
 
   const focusState: FocusRuntimeState = {
     focusedBodyId: null,
     focusLocked: false,
-    focusOffset: new THREE.Vector3(0, 0, 0),
-    focusTransition: {
-      active: false,
-      elapsed: 0,
-      duration: 0.85,
-      startCamera: new THREE.Vector3(),
-      startTarget: new THREE.Vector3(),
-    },
+    lastFocusedWorldPosition: null,
   };
 
   const bodyButtons = createBodyButtons(hud.bodyList, (bodyId) => {
@@ -258,10 +250,10 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
-    const bodyPosition = latestPositions[bodyId].clone();
-    const direction = engine.camera.position.clone().sub(bodyPosition);
+    const focusedPosition = latestPositions[bodyId].clone();
+    const direction = engine.camera.position.clone().sub(controls.target);
     if (direction.lengthSq() < 0.0001) {
-      direction.set(1, 0.35, 1);
+      direction.set(1, 0.3, 1);
     }
     direction.normalize();
 
@@ -271,14 +263,13 @@ async function bootstrap(): Promise<void> {
       runtimeBody.config.visualRadius * 3 + 1.2,
     );
 
+    engine.camera.position.copy(focusedPosition).addScaledVector(direction, focusDistance);
+    controls.target.copy(focusedPosition);
+    controls.update();
+
     focusState.focusedBodyId = bodyId;
     focusState.focusLocked = true;
-    focusState.focusOffset.copy(direction.multiplyScalar(focusDistance));
-    focusState.focusTransition.active = true;
-    focusState.focusTransition.elapsed = 0;
-    focusState.focusTransition.startCamera.copy(engine.camera.position);
-    focusState.focusTransition.startTarget.copy(controls.target);
-    controls.enabled = false;
+    focusState.lastFocusedWorldPosition = focusedPosition.clone();
   });
 
   const updateFocusUi = (): void => {
@@ -308,8 +299,7 @@ async function bootstrap(): Promise<void> {
   const releaseFocus = (): void => {
     focusState.focusLocked = false;
     focusState.focusedBodyId = null;
-    focusState.focusTransition.active = false;
-    controls.enabled = true;
+    focusState.lastFocusedWorldPosition = null;
     updateFocusUi();
   };
 
@@ -381,12 +371,13 @@ async function bootstrap(): Promise<void> {
   window.addEventListener("keydown", onKeyDown);
 
   const onResize = (): void => {
-    const width = hud.viewport.clientWidth || window.innerWidth;
-    const height = hud.viewport.clientHeight || window.innerHeight;
-    engine.setSize(width, height);
-    postProcessing.setSize(width, height);
-    for (const orbitVisual of orbitVisuals) {
-      setOrbitVisualResolution(orbitVisual, width, height);
+    viewportWidth = hud.viewport.clientWidth || window.innerWidth;
+    viewportHeight = hud.viewport.clientHeight || window.innerHeight;
+    engine.setSize(viewportWidth, viewportHeight);
+    postProcessing.setSize(viewportWidth, viewportHeight);
+
+    for (const orbitArc of orbitArcs.values()) {
+      setOrbitVisualResolution(orbitArc, viewportWidth, viewportHeight);
     }
   };
 
@@ -414,32 +405,35 @@ async function bootstrap(): Promise<void> {
       runtimeBody.spinner.rotation.y = snapshot.spinAnglesRad[bodyId];
     }
 
+    for (const [bodyId, orbitArc] of orbitArcs) {
+      const bodyConfig = runtimeBodies.get(bodyId)?.config;
+      if (!bodyConfig?.orbit) {
+        continue;
+      }
+
+      const trueAnomaly = snapshot.trueAnomaliesRad[bodyId] ?? 0;
+      const gapDegrees = bodyConfig.orbit.orbitGapDegrees ?? 0;
+      updateOrbitArc(
+        orbitArc,
+        trueAnomaly,
+        gapDegrees,
+        viewportWidth,
+        viewportHeight,
+        ORBIT_GAP_UPDATE_STEP_RAD,
+      );
+    }
+
     if (focusState.focusLocked && focusState.focusedBodyId) {
       const focusedPosition = latestPositions[focusState.focusedBodyId];
-      if (focusState.focusTransition.active) {
-        focusState.focusTransition.elapsed += deltaSeconds;
-        const normalizedT = Math.min(
-          focusState.focusTransition.elapsed / focusState.focusTransition.duration,
-          1,
-        );
-        const smoothT = normalizedT * normalizedT * (3 - 2 * normalizedT);
-        const desiredPosition = focusedPosition.clone().add(focusState.focusOffset);
-        engine.camera.position.lerpVectors(
-          focusState.focusTransition.startCamera,
-          desiredPosition,
-          smoothT,
-        );
-        controls.target.lerpVectors(
-          focusState.focusTransition.startTarget,
-          focusedPosition,
-          smoothT,
-        );
-        if (normalizedT >= 1) {
-          focusState.focusTransition.active = false;
-        }
+      if (!focusState.lastFocusedWorldPosition) {
+        focusState.lastFocusedWorldPosition = focusedPosition.clone();
       } else {
-        engine.camera.position.copy(focusedPosition).add(focusState.focusOffset);
-        controls.target.copy(focusedPosition);
+        const delta = focusedPosition.clone().sub(focusState.lastFocusedWorldPosition);
+        if (delta.lengthSq() > 0) {
+          engine.camera.position.add(delta);
+          controls.target.add(delta);
+          focusState.lastFocusedWorldPosition.copy(focusedPosition);
+        }
       }
     }
 
@@ -478,9 +472,11 @@ async function bootstrap(): Promise<void> {
     postProcessing.composer.dispose();
     engine.dispose();
 
-    for (const orbitVisual of orbitVisuals) {
-      orbitVisual.mesh.geometry.dispose();
-      orbitVisual.material.dispose();
+    for (const orbitArc of orbitArcs.values()) {
+      orbitArc.segmentA.geometry.dispose();
+      orbitArc.segmentB.geometry.dispose();
+      orbitArc.segmentA.material.dispose();
+      orbitArc.segmentB.material.dispose();
     }
   };
 
