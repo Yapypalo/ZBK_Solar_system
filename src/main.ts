@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { createSolarControls } from "./core/controls";
 import { createEngine } from "./core/engine";
+import { BODY_CARDS } from "./data/bodyCards";
 import { BODY_IDS, BODY_LIST } from "./data/bodies";
 import { createBodyVisual } from "./render/bodyFactory";
 import {
@@ -18,7 +19,6 @@ import type {
   BodyId,
   BodyVisualConfig,
   ModelLoadState,
-  QualityPreset,
 } from "./types";
 import "./styles/theme.css";
 
@@ -42,14 +42,36 @@ interface FocusRuntimeState {
   lastFocusedWorldPosition: THREE.Vector3 | null;
 }
 
+interface PointerClickState {
+  active: boolean;
+  pointerId: number | null;
+  downX: number;
+  downY: number;
+  downTs: number;
+}
+
+interface FocusTransitionState {
+  active: boolean;
+  bodyId: BodyId | null;
+  elapsedSec: number;
+  durationSec: number;
+  fromCamera: THREE.Vector3;
+  fromTarget: THREE.Vector3;
+}
+
 interface HudRefs {
   viewport: HTMLElement;
   hudPanel: HTMLElement;
+  cardRoot: HTMLElement;
+  cardKind: HTMLElement;
+  cardTitle: HTMLElement;
+  cardSubtitle: HTMLElement;
+  cardSummary: HTMLElement;
+  cardFacts: HTMLElement;
   warningStripe: HTMLElement;
   hudToggleButton: HTMLButtonElement;
   dateValue: HTMLElement;
   scaleValue: HTMLElement;
-  qualityValue: HTMLElement;
   fpsValue: HTMLElement;
   focusValue: HTMLElement;
   bodyList: HTMLElement;
@@ -62,35 +84,56 @@ const dateFormatter = new Intl.DateTimeFormat("en-GB", {
   timeZone: "UTC",
 });
 
+const LEFT_COMPOSITION_SCREEN_X = 0.25;
+const FOCUS_TRANSITION_SEC = 0.45;
+const CLICK_MAX_DRAG_PX = 6;
+const CLICK_MAX_DURATION_MS = 350;
+const MIN_HIT_RADIUS_PX = 18;
+const MAX_HIT_RADIUS_PX = 68;
+const HIT_RADIUS_SCALE = 2.25;
+const HUD_TOGGLE_IDLE_HIDE_MS = 2_000;
+
 function createHud(app: HTMLElement): HudRefs {
   app.innerHTML = `
     <div id="viewport" class="viewport"></div>
     <button id="hud-visibility-toggle" type="button" class="hud-visibility-toggle">HUD: ON (H)</button>
     <aside class="hud">
       <div class="hud__brand" data-glitch="ZBK INC.">ZBK INC.</div>
-      <div class="hud__title">APOLLO · MISSION CONTROL</div>
+      <div class="hud__title">ZBK &middot; ORBITAL ARCHIVE</div>
       <div class="hud__stats">
         <div class="hud__row"><span>UTC</span><span id="hud-date">--</span></div>
         <div class="hud__row"><span>TIME SCALE</span><span id="hud-scale">1 day/s</span></div>
-        <div class="hud__row"><span>ASSET LOD</span><span id="hud-quality">1k</span></div>
         <div class="hud__row"><span>FOCUS</span><span id="hud-focus">FREE</span></div>
         <div class="hud__row"><span>FPS</span><span id="hud-fps">0</span></div>
       </div>
       <div class="hud__section-title">CELESTIAL BODIES</div>
       <div id="body-list" class="body-list"></div>
       <button id="focus-release" type="button" class="hud__release">Release Focus (Esc)</button>
-      <div class="hud__hint">[ / ] RATE · SPACE PAUSE · 1/4 LOD · H HUD · DRAG ORBIT</div>
+      <div class="hud__hint">[ / ] RATE &middot; SPACE PAUSE &middot; H HUD &middot; DRAG ORBIT &middot; CLICK TARGET</div>
     </aside>
-    <div class="warning-stripe">CAUTION · LIVE ORBIT TRACKING</div>
+    <aside id="body-card" class="body-card body-card--hidden">
+      <div class="body-card__band">OBJECT DOSSIER</div>
+      <div id="card-kind" class="body-card__kind">--</div>
+      <div id="card-title" class="body-card__title">--</div>
+      <div id="card-subtitle" class="body-card__subtitle">--</div>
+      <p id="card-summary" class="body-card__summary">--</p>
+      <div id="card-facts" class="body-card__facts"></div>
+    </aside>
+    <div class="warning-stripe">CAUTION &middot; LIVE ORBIT TRACKING</div>
   `;
 
   const viewport = app.querySelector<HTMLElement>("#viewport");
   const hudPanel = app.querySelector<HTMLElement>(".hud");
+  const cardRoot = app.querySelector<HTMLElement>("#body-card");
+  const cardKind = app.querySelector<HTMLElement>("#card-kind");
+  const cardTitle = app.querySelector<HTMLElement>("#card-title");
+  const cardSubtitle = app.querySelector<HTMLElement>("#card-subtitle");
+  const cardSummary = app.querySelector<HTMLElement>("#card-summary");
+  const cardFacts = app.querySelector<HTMLElement>("#card-facts");
   const warningStripe = app.querySelector<HTMLElement>(".warning-stripe");
   const hudToggleButton = app.querySelector<HTMLButtonElement>("#hud-visibility-toggle");
   const dateValue = app.querySelector<HTMLElement>("#hud-date");
   const scaleValue = app.querySelector<HTMLElement>("#hud-scale");
-  const qualityValue = app.querySelector<HTMLElement>("#hud-quality");
   const fpsValue = app.querySelector<HTMLElement>("#hud-fps");
   const focusValue = app.querySelector<HTMLElement>("#hud-focus");
   const bodyList = app.querySelector<HTMLElement>("#body-list");
@@ -99,11 +142,16 @@ function createHud(app: HTMLElement): HudRefs {
   if (
     !viewport ||
     !hudPanel ||
+    !cardRoot ||
+    !cardKind ||
+    !cardTitle ||
+    !cardSubtitle ||
+    !cardSummary ||
+    !cardFacts ||
     !warningStripe ||
     !hudToggleButton ||
     !dateValue ||
     !scaleValue ||
-    !qualityValue ||
     !fpsValue ||
     !focusValue ||
     !bodyList ||
@@ -115,11 +163,16 @@ function createHud(app: HTMLElement): HudRefs {
   return {
     viewport,
     hudPanel,
+    cardRoot,
+    cardKind,
+    cardTitle,
+    cardSubtitle,
+    cardSummary,
+    cardFacts,
     warningStripe,
     hudToggleButton,
     dateValue,
     scaleValue,
-    qualityValue,
     fpsValue,
     focusValue,
     bodyList,
@@ -168,7 +221,6 @@ function createBodyButtons(
 
 async function createRuntimeBody(
   config: BodyVisualConfig,
-  quality: QualityPreset,
 ): Promise<RuntimeBody> {
   const root = new THREE.Group();
   root.name = `${config.id}-root`;
@@ -180,7 +232,7 @@ async function createRuntimeBody(
   const spinner = new THREE.Group();
   spinner.name = `${config.id}-spinner`;
 
-  const { visual, loadState } = await createBodyVisual(config, quality);
+  const { visual, loadState } = await createBodyVisual(config, "1k");
   visual.name = `${config.id}-visual`;
 
   spinner.add(visual);
@@ -221,10 +273,7 @@ async function bootstrap(): Promise<void> {
   let viewportWidth = hud.viewport.clientWidth || window.innerWidth;
   let viewportHeight = hud.viewport.clientHeight || window.innerHeight;
 
-  const initialQuality = simClock.getState().quality;
-  const runtimeBodyList = await Promise.all(
-    BODY_LIST.map((config) => createRuntimeBody(config, initialQuality)),
-  );
+  const runtimeBodyList = await Promise.all(BODY_LIST.map((config) => createRuntimeBody(config)));
 
   for (const runtimeBody of runtimeBodyList) {
     runtimeBodies.set(runtimeBody.config.id, runtimeBody);
@@ -253,15 +302,34 @@ async function bootstrap(): Promise<void> {
     lastFocusedWorldPosition: null,
   };
 
-  const bodyButtons = createBodyButtons(hud.bodyList, (bodyId) => {
+  const pointerState: PointerClickState = {
+    active: false,
+    pointerId: null,
+    downX: 0,
+    downY: 0,
+    downTs: 0,
+  };
+
+  const focusTransition: FocusTransitionState = {
+    active: false,
+    bodyId: null,
+    elapsedSec: 0,
+    durationSec: FOCUS_TRANSITION_SEC,
+    fromCamera: new THREE.Vector3(),
+    fromTarget: new THREE.Vector3(),
+  };
+
+  const computeDesiredFocusPose = (
+    bodyId: BodyId,
+  ): { cameraPos: THREE.Vector3; targetPos: THREE.Vector3 } | null => {
     const runtimeBody = runtimeBodies.get(bodyId);
     if (!runtimeBody) {
-      return;
+      return null;
     }
 
     const focusedPosition = latestPositions[bodyId].clone();
     const direction = engine.camera.position.clone().sub(controls.target);
-    if (direction.lengthSq() < 0.0001) {
+    if (direction.lengthSq() < 0.000001) {
       direction.set(1, 0.3, 1);
     }
     direction.normalize();
@@ -272,18 +340,170 @@ async function bootstrap(): Promise<void> {
       runtimeBody.config.visualRadius * 3 + 1.2,
     );
 
-    engine.camera.position.copy(focusedPosition).addScaledVector(direction, focusDistance);
-    controls.target.copy(focusedPosition);
-    controls.update();
+    const cameraBase = focusedPosition.clone().addScaledVector(direction, focusDistance);
+
+    return {
+      cameraPos: cameraBase,
+      targetPos: focusedPosition,
+    };
+  };
+
+  const applyFocusComposition = (bodyId: BodyId): void => {
+    const bodyPosition = latestPositions[bodyId];
+    const toBody = bodyPosition.clone().sub(engine.camera.position);
+    const distance = toBody.length();
+    if (distance < 0.000001) {
+      return;
+    }
+
+    const forward = toBody.normalize();
+    const right = new THREE.Vector3().crossVectors(forward, engine.camera.up);
+    if (right.lengthSq() < 0.000001) {
+      right.set(1, 0, 0);
+    } else {
+      right.normalize();
+    }
+
+    const desiredNdcX = LEFT_COMPOSITION_SCREEN_X * 2 - 1;
+    const fovRad = THREE.MathUtils.degToRad(engine.camera.fov);
+    const shift = -desiredNdcX * Math.tan(fovRad / 2) * engine.camera.aspect * distance;
+    const targetPosition = bodyPosition.clone().addScaledVector(right, shift);
+    engine.camera.lookAt(targetPosition);
+  };
+
+  const pickBodyByScreenProximity = (clientX: number, clientY: number): BodyId | null => {
+    const viewportRect = hud.viewport.getBoundingClientRect();
+    if (viewportRect.width <= 0 || viewportRect.height <= 0) {
+      return null;
+    }
+
+    const localX = clientX - viewportRect.left;
+    const localY = clientY - viewportRect.top;
+    if (
+      localX < 0 ||
+      localY < 0 ||
+      localX > viewportRect.width ||
+      localY > viewportRect.height
+    ) {
+      return null;
+    }
+
+    const fovRad = THREE.MathUtils.degToRad(engine.camera.fov);
+    let bestBodyId: BodyId | null = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+    let bestDepth = Number.POSITIVE_INFINITY;
+
+    for (const bodyId of BODY_IDS) {
+      const runtimeBody = runtimeBodies.get(bodyId);
+      if (!runtimeBody) {
+        continue;
+      }
+
+      const worldPos = latestPositions[bodyId];
+      const cameraSpace = worldPos.clone().applyMatrix4(engine.camera.matrixWorldInverse);
+      const depth = -cameraSpace.z;
+      if (depth <= 0) {
+        continue;
+      }
+
+      const projected = worldPos.clone().project(engine.camera);
+      const screenX = (projected.x * 0.5 + 0.5) * viewportRect.width;
+      const screenY = (-projected.y * 0.5 + 0.5) * viewportRect.height;
+      const distPx = Math.hypot(screenX - localX, screenY - localY);
+
+      const pxPerWorldY = viewportRect.height / (2 * Math.tan(fovRad / 2) * depth);
+      const projectedRadiusPx = runtimeBody.config.visualRadius * pxPerWorldY;
+      const hitRadiusPx = THREE.MathUtils.clamp(
+        Math.max(projectedRadiusPx * HIT_RADIUS_SCALE, MIN_HIT_RADIUS_PX),
+        MIN_HIT_RADIUS_PX,
+        MAX_HIT_RADIUS_PX,
+      );
+
+      if (distPx > hitRadiusPx) {
+        continue;
+      }
+
+      const score = distPx / hitRadiusPx;
+      const scoreIsSimilar = Math.abs(score - bestScore) < 0.03;
+      if (score < bestScore || (scoreIsSimilar && depth < bestDepth)) {
+        bestBodyId = bodyId;
+        bestScore = score;
+        bestDepth = depth;
+      }
+    }
+
+    return bestBodyId;
+  };
+
+  const setCardVisible = (visible: boolean): void => {
+    hud.cardRoot.classList.toggle("body-card--hidden", !visible);
+  };
+
+  const clearCard = (): void => {
+    hud.cardKind.textContent = "--";
+    hud.cardTitle.textContent = "--";
+    hud.cardSubtitle.textContent = "--";
+    hud.cardSummary.textContent = "--";
+    hud.cardFacts.innerHTML = "";
+  };
+
+  const renderCard = (bodyId: BodyId): void => {
+    const card = BODY_CARDS[bodyId];
+    if (!card) {
+      clearCard();
+      return;
+    }
+
+    hud.cardKind.textContent = card.kind.toUpperCase();
+    hud.cardTitle.textContent = card.titleRu;
+    hud.cardSubtitle.textContent = card.subtitleEn;
+    hud.cardSummary.textContent = card.summaryRu;
+    hud.cardFacts.innerHTML = "";
+
+    for (const fact of card.facts) {
+      const row = document.createElement("div");
+      row.className = "body-card__fact";
+
+      const label = document.createElement("span");
+      label.className = "body-card__fact-label";
+      label.textContent = fact.labelEn;
+
+      const value = document.createElement("span");
+      value.className = "body-card__fact-value";
+      value.textContent = fact.value;
+
+      row.append(label, value);
+      hud.cardFacts.appendChild(row);
+    }
+  };
+
+  const startFocus = (bodyId: BodyId): void => {
+    if (!runtimeBodies.get(bodyId)) {
+      return;
+    }
+
+    focusTransition.active = true;
+    focusTransition.bodyId = bodyId;
+    focusTransition.elapsedSec = 0;
+    focusTransition.durationSec = FOCUS_TRANSITION_SEC;
+    focusTransition.fromCamera.copy(engine.camera.position);
+    focusTransition.fromTarget.copy(controls.target);
 
     focusState.focusedBodyId = bodyId;
-    focusState.focusLocked = true;
-    focusState.lastFocusedWorldPosition = focusedPosition.clone();
+    focusState.focusLocked = false;
+    focusState.lastFocusedWorldPosition = null;
+    renderCard(bodyId);
+    setCardVisible(true);
+    updateFocusUi();
+  };
+
+  const bodyButtons = createBodyButtons(hud.bodyList, (bodyId) => {
+    startFocus(bodyId);
   });
 
   const updateFocusUi = (): void => {
     const focusedBodyId = focusState.focusedBodyId;
-    if (!focusState.focusLocked || !focusedBodyId) {
+    if (!focusedBodyId || (!focusState.focusLocked && !focusTransition.active)) {
       hud.focusValue.textContent = "FREE";
     } else {
       const runtimeBody = runtimeBodies.get(focusedBodyId);
@@ -306,20 +526,70 @@ async function bootstrap(): Promise<void> {
   };
 
   const releaseFocus = (): void => {
+    focusTransition.active = false;
+    focusTransition.bodyId = null;
+    focusTransition.elapsedSec = 0;
+    focusTransition.durationSec = FOCUS_TRANSITION_SEC;
     focusState.focusLocked = false;
     focusState.focusedBodyId = null;
     focusState.lastFocusedWorldPosition = null;
+    clearCard();
+    setCardVisible(false);
     updateFocusUi();
   };
 
   hud.releaseFocusButton.addEventListener("click", releaseFocus);
+  clearCard();
+  setCardVisible(false);
   updateFocusUi();
 
   let hudHidden = false;
+  let hudToggleHideTimer: number | null = null;
+
+  const setHudToggleGhosted = (ghosted: boolean): void => {
+    hud.hudToggleButton.classList.toggle("hud-visibility-toggle--ghost", ghosted);
+  };
+
+  const clearHudToggleHideTimer = (): void => {
+    if (hudToggleHideTimer !== null) {
+      window.clearTimeout(hudToggleHideTimer);
+      hudToggleHideTimer = null;
+    }
+  };
+
+  const scheduleHudToggleHide = (): void => {
+    clearHudToggleHideTimer();
+    if (!hudHidden) {
+      return;
+    }
+
+    hudToggleHideTimer = window.setTimeout(() => {
+      hudToggleHideTimer = null;
+      if (hudHidden) {
+        setHudToggleGhosted(true);
+      }
+    }, HUD_TOGGLE_IDLE_HIDE_MS);
+  };
+
+  const registerHudHiddenActivity = (): void => {
+    if (!hudHidden) {
+      return;
+    }
+    setHudToggleGhosted(false);
+    scheduleHudToggleHide();
+  };
+
   const setHudHidden = (hidden: boolean): void => {
     hudHidden = hidden;
     app.classList.toggle("hud-hidden", hidden);
     hud.hudToggleButton.textContent = hidden ? "HUD: OFF (H)" : "HUD: ON (H)";
+    if (hidden) {
+      setHudToggleGhosted(false);
+      scheduleHudToggleHide();
+    } else {
+      clearHudToggleHideTimer();
+      setHudToggleGhosted(false);
+    }
   };
 
   const onToggleHud = (): void => {
@@ -327,37 +597,72 @@ async function bootstrap(): Promise<void> {
   };
   hud.hudToggleButton.addEventListener("click", onToggleHud);
 
-  let qualityChangeInProgress = false;
+  const rendererDomElement = engine.renderer.domElement;
+  const resetPointerState = (): void => {
+    pointerState.active = false;
+    pointerState.pointerId = null;
+  };
 
-  const switchQuality = async (quality: QualityPreset): Promise<void> => {
-    if (qualityChangeInProgress || simClock.getState().quality === quality) {
+  const onPointerDown = (event: PointerEvent): void => {
+    if (event.button !== 0) {
       return;
     }
 
-    qualityChangeInProgress = true;
-    simClock.setQuality(quality);
+    pointerState.active = true;
+    pointerState.pointerId = event.pointerId;
+    pointerState.downX = event.clientX;
+    pointerState.downY = event.clientY;
+    pointerState.downTs = performance.now();
+  };
 
-    try {
-      for (const bodyId of BODY_IDS) {
-        const runtimeBody = runtimeBodies.get(bodyId);
-        if (!runtimeBody) {
-          continue;
-        }
+  const onPointerUp = (event: PointerEvent): void => {
+    if (!pointerState.active || pointerState.pointerId !== event.pointerId) {
+      return;
+    }
 
-        runtimeBody.spinner.remove(runtimeBody.visual);
-        const { visual, loadState } = await createBodyVisual(runtimeBody.config, quality);
-        visual.name = `${runtimeBody.config.id}-visual`;
-        runtimeBody.visual = visual;
-        runtimeBody.modelLoadState = loadState;
-        runtimeBody.spinner.add(visual);
-      }
-    } finally {
-      qualityChangeInProgress = false;
-      updateFocusUi();
+    const dragPx = Math.hypot(
+      event.clientX - pointerState.downX,
+      event.clientY - pointerState.downY,
+    );
+    const durationMs = performance.now() - pointerState.downTs;
+    resetPointerState();
+
+    if (dragPx > CLICK_MAX_DRAG_PX || durationMs > CLICK_MAX_DURATION_MS) {
+      return;
+    }
+
+    const pickedBody = pickBodyByScreenProximity(event.clientX, event.clientY);
+    if (pickedBody) {
+      startFocus(pickedBody);
     }
   };
 
+  const onPointerCancel = (): void => {
+    resetPointerState();
+  };
+
+  const onWindowBlur = (): void => {
+    resetPointerState();
+  };
+
+  const onGlobalPointerMove = (): void => {
+    registerHudHiddenActivity();
+  };
+
+  const onGlobalPointerDown = (): void => {
+    registerHudHiddenActivity();
+  };
+
+  rendererDomElement.addEventListener("pointerdown", onPointerDown);
+  rendererDomElement.addEventListener("pointerup", onPointerUp);
+  rendererDomElement.addEventListener("pointercancel", onPointerCancel);
+  window.addEventListener("blur", onWindowBlur);
+  window.addEventListener("pointermove", onGlobalPointerMove, { passive: true });
+  window.addEventListener("pointerdown", onGlobalPointerDown, { passive: true });
+
   const onKeyDown = (event: KeyboardEvent): void => {
+    registerHudHiddenActivity();
+
     if (event.code === "Space") {
       event.preventDefault();
       simClock.togglePause();
@@ -371,16 +676,6 @@ async function bootstrap(): Promise<void> {
 
     if (event.code === "BracketRight") {
       simClock.increaseScale();
-      return;
-    }
-
-    if (event.code === "Digit1") {
-      void switchQuality("1k");
-      return;
-    }
-
-    if (event.code === "Digit4") {
-      void switchQuality("4k");
       return;
     }
 
@@ -436,17 +731,51 @@ async function bootstrap(): Promise<void> {
       updateOrbitArc(orbitArc, trueAnomaly);
     }
 
-    if (focusState.focusLocked && focusState.focusedBodyId) {
+    if (focusTransition.active && focusTransition.bodyId) {
+      focusTransition.elapsedSec += deltaSeconds;
+      const transitionProgress = THREE.MathUtils.clamp(
+        focusTransition.elapsedSec / focusTransition.durationSec,
+        0,
+        1,
+      );
+      const easedProgress =
+        transitionProgress * transitionProgress * (3 - 2 * transitionProgress);
+      const targetBodyId = focusTransition.bodyId;
+      const desiredPose = computeDesiredFocusPose(targetBodyId);
+
+      if (desiredPose) {
+        engine.camera.position.lerpVectors(
+          focusTransition.fromCamera,
+          desiredPose.cameraPos,
+          easedProgress,
+        );
+        controls.target.lerpVectors(
+          focusTransition.fromTarget,
+          desiredPose.targetPos,
+          easedProgress,
+        );
+      }
+
+      if (transitionProgress >= 1) {
+        focusTransition.active = false;
+        focusTransition.bodyId = null;
+        focusTransition.elapsedSec = 0;
+        focusTransition.durationSec = FOCUS_TRANSITION_SEC;
+        focusState.focusLocked = true;
+        focusState.lastFocusedWorldPosition = latestPositions[targetBodyId].clone();
+      }
+    } else if (focusState.focusLocked && focusState.focusedBodyId) {
       const focusedPosition = latestPositions[focusState.focusedBodyId];
       if (!focusState.lastFocusedWorldPosition) {
         focusState.lastFocusedWorldPosition = focusedPosition.clone();
+        controls.target.copy(focusedPosition);
       } else {
         const delta = focusedPosition.clone().sub(focusState.lastFocusedWorldPosition);
         if (delta.lengthSq() > 0) {
           engine.camera.position.add(delta);
-          controls.target.add(delta);
-          focusState.lastFocusedWorldPosition.copy(focusedPosition);
         }
+        controls.target.copy(focusedPosition);
+        focusState.lastFocusedWorldPosition.copy(focusedPosition);
       }
     }
 
@@ -454,6 +783,11 @@ async function bootstrap(): Promise<void> {
     starfield.rotation.x += deltaSeconds * 0.00045;
 
     controls.update();
+    if (focusTransition.active && focusTransition.bodyId) {
+      applyFocusComposition(focusTransition.bodyId);
+    } else if (focusState.focusLocked && focusState.focusedBodyId) {
+      applyFocusComposition(focusState.focusedBodyId);
+    }
     postProcessing.render();
 
     if (deltaSeconds > 0) {
@@ -466,7 +800,6 @@ async function bootstrap(): Promise<void> {
       hudTimeAccumulator = 0;
       hud.dateValue.textContent = `${dateFormatter.format(state.currentDate)} UTC`;
       hud.scaleValue.textContent = formatTimeScale(state.timeScaleDaysPerSecond);
-      hud.qualityValue.textContent = state.quality.toUpperCase();
       hud.fpsValue.textContent = smoothedFps.toFixed(1);
       updateFocusUi();
     }
@@ -476,11 +809,18 @@ async function bootstrap(): Promise<void> {
 
   const onBeforeUnload = (): void => {
     window.cancelAnimationFrame(animationFrameId);
+    clearHudToggleHideTimer();
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("resize", onResize);
+    window.removeEventListener("blur", onWindowBlur);
+    window.removeEventListener("pointermove", onGlobalPointerMove);
+    window.removeEventListener("pointerdown", onGlobalPointerDown);
     window.removeEventListener("beforeunload", onBeforeUnload);
     hud.releaseFocusButton.removeEventListener("click", releaseFocus);
     hud.hudToggleButton.removeEventListener("click", onToggleHud);
+    rendererDomElement.removeEventListener("pointerdown", onPointerDown);
+    rendererDomElement.removeEventListener("pointerup", onPointerUp);
+    rendererDomElement.removeEventListener("pointercancel", onPointerCancel);
     controls.dispose();
     postProcessing.smaaPass.dispose();
     postProcessing.composer.dispose();
@@ -508,3 +848,5 @@ void bootstrap().catch((error: unknown) => {
 
   console.error(error);
 });
+
+

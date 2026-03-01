@@ -8,8 +8,18 @@ export type BodyId =
   | "phobos"
   | "deimos";
 
+export type BodyKind = "star" | "planet" | "satellite";
 export type QualityPreset = "1k" | "4k";
 export type ModelLoadState = "loaded" | "fallback" | "error";
+
+export interface BodyCardContent {
+  id: BodyId;
+  kind: BodyKind;
+  titleRu: string;
+  subtitleEn: string;
+  summaryRu: string;
+  facts: Array<{ labelEn: string; value: string }>;
+}
 
 export interface OrbitElements {
   epochJd: number;
