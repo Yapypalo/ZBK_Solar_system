@@ -21,7 +21,7 @@ export function createEngine(mount: HTMLElement): EngineContext {
   camera.position.set(0, 22, 92);
 
   const renderer = new THREE.WebGLRenderer({
-    antialias: true,
+    antialias: false,
     alpha: false,
     powerPreference: "high-performance",
   });

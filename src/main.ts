@@ -292,14 +292,14 @@ async function bootstrap(): Promise<void> {
       continue;
     }
 
-    const orbitArc = createOrbitArcRuntime(config.id, config.orbit, config.color, 1440);
+    const orbitArc = createOrbitArcRuntime(config.id, config.orbit, config.color, 1024);
     orbitArcs.set(config.id, orbitArc);
 
     const parentRuntime = runtimeBodies.get(config.orbit.centralBody);
     if (parentRuntime) {
-      parentRuntime.root.add(orbitArc.line);
+      parentRuntime.root.add(orbitArc.mesh);
     } else {
-      engine.scene.add(orbitArc.line);
+      engine.scene.add(orbitArc.mesh);
     }
   }
 
@@ -842,8 +842,7 @@ async function bootstrap(): Promise<void> {
     rendererDomElement.removeEventListener("pointerup", onPointerUp);
     rendererDomElement.removeEventListener("pointercancel", onPointerCancel);
     controls.dispose();
-    postProcessing.smaaPass.dispose();
-    postProcessing.composer.dispose();
+    postProcessing.dispose();
     engine.dispose();
 
     for (const orbitArc of orbitArcs.values()) {
