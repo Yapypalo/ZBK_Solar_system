@@ -5,13 +5,15 @@ import { degToRad, normalizeAngleRadians, sampleOrbitPointsKm } from "../sim/orb
 
 const TAU = Math.PI * 2;
 const BASE_OPACITY = 0.72;
-const BASE_LINE_WIDTH_PX = 1.5;
+const BASE_LINE_CORE_HALF_WIDTH_PX = 1.15;
+const BASE_LINE_FEATHER_PX = 1.1;
 const TRAIL_TOTAL_DEG = 329.0;
 const TERMINAL_FADE_START = 0.97;
 
 const ORBIT_VERTEX_SHADER = `
 uniform vec2 uResolution;
-uniform float uLineWidthPx;
+uniform float uLineCoreHalfWidthPx;
+uniform float uLineFeatherPx;
 
 attribute vec3 previous;
 attribute vec3 next;
@@ -41,7 +43,8 @@ void main() {
   vec2 direction = safeNormalize(nextNdc - previousNdc);
   vec2 normal = vec2(-direction.y, direction.x);
   vec2 pixelToNdc = vec2(2.0 / uResolution.x, 2.0 / uResolution.y);
-  vec2 offset = normal * side * uLineWidthPx * pixelToNdc;
+  float totalHalfWidthPx = uLineCoreHalfWidthPx + uLineFeatherPx;
+  vec2 offset = normal * side * totalHalfWidthPx * pixelToNdc;
 
   currentClip.xy += offset * currentClip.w;
 
@@ -54,15 +57,24 @@ void main() {
 const ORBIT_FRAGMENT_SHADER = `
 uniform vec3 uColor;
 uniform float uOpacity;
+uniform float uLineCoreHalfWidthPx;
+uniform float uLineFeatherPx;
 
 varying float vAlpha;
 varying float vSide;
 
 void main() {
-  float edgeDistance = abs(vSide);
-  float edgeAntiAlias = max(fwidth(edgeDistance) * 1.75, 0.02);
-  float edgeMask = 1.0 - smoothstep(1.0 - edgeAntiAlias, 1.0, edgeDistance);
-  float finalAlpha = vAlpha * uOpacity * edgeMask;
+  float totalHalfWidthPx = uLineCoreHalfWidthPx + uLineFeatherPx;
+  float distPx = abs(vSide) * totalHalfWidthPx;
+
+  // Core stays solid, feather zone fades to transparent at triangle border.
+  float featherMask = 1.0 - smoothstep(uLineCoreHalfWidthPx, totalHalfWidthPx, distPx);
+
+  // Small derivative assist to avoid hard stepping on high-contrast backgrounds.
+  float aa = max(fwidth(distPx), 0.35);
+  featherMask *= 1.0 - smoothstep(totalHalfWidthPx - aa, totalHalfWidthPx, distPx);
+
+  float finalAlpha = vAlpha * uOpacity * featherMask;
 
   if (finalAlpha <= 0.001) {
     discard;
@@ -118,7 +130,8 @@ function createRibbonMaterial(color: THREE.ColorRepresentation): THREE.ShaderMat
     uniforms: {
       uColor: { value: new THREE.Color(color) },
       uOpacity: { value: BASE_OPACITY },
-      uLineWidthPx: { value: BASE_LINE_WIDTH_PX },
+      uLineCoreHalfWidthPx: { value: BASE_LINE_CORE_HALF_WIDTH_PX },
+      uLineFeatherPx: { value: BASE_LINE_FEATHER_PX },
       uResolution: {
         value: new THREE.Vector2(
           Math.max(1, window.innerWidth),
@@ -253,7 +266,7 @@ export function createOrbitArcRuntime(
   color: THREE.ColorRepresentation,
   samples = 1440,
 ): OrbitArcRuntime {
-  const baseSampleCount = Math.max(1536, samples * 2);
+  const baseSampleCount = Math.max(2048, samples * 2);
   const sampled = dropDuplicateClosingPoint(sampleOrbitPointsKm(orbit, baseSampleCount));
   const basePointsScene = new Float32Array(sampled.length * 3);
 
@@ -265,7 +278,7 @@ export function createOrbitArcRuntime(
     basePointsScene[offset + 2] = scaled.z;
   });
 
-  const trailPointCount = Math.max(1024, samples);
+  const trailPointCount = Math.max(1280, samples);
   const material = createRibbonMaterial(color);
   const ribbonGeometry = createRibbonGeometry(trailPointCount);
   const mesh = new THREE.Mesh(ribbonGeometry.geometry, material);
