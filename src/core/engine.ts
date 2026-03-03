@@ -37,24 +37,28 @@ export function createEngine(mount: HTMLElement): EngineContext {
   }
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.22;
+  renderer.toneMappingExposure = 1.3;
   renderer.setPixelRatio(getEffectivePixelRatio(window.devicePixelRatio));
   renderer.setSize(initialWidth, initialHeight);
   mount.appendChild(renderer.domElement);
 
-  const ambientLight = new THREE.AmbientLight("#AFC8F0", 0.02);
+  const ambientLight = new THREE.AmbientLight("#AFC8F0", 0.03);
   scene.add(ambientLight);
 
-  const hemisphereLight = new THREE.HemisphereLight("#AFCBF5", "#060B13", 0.04);
+  const hemisphereLight = new THREE.HemisphereLight("#AFCBF5", "#060B13", 0.06);
   scene.add(hemisphereLight);
 
-  const solarLight = new THREE.PointLight("#FFF5E3", 280_000, 0, 2);
+  const solarLight = new THREE.PointLight("#FFF5E3", 300_000, 0, 2);
   solarLight.position.set(0, 0, 0);
   scene.add(solarLight);
 
-  const rimLight = new THREE.DirectionalLight("#7FA7FF", 0.06);
+  const rimLight = new THREE.DirectionalLight("#7FA7FF", 0.12);
   rimLight.position.set(-220, 80, -130);
   scene.add(rimLight);
+
+  const fillRimLight = new THREE.DirectionalLight("#8FBBFF", 0.05);
+  fillRimLight.position.set(210, -40, 180);
+  scene.add(fillRimLight);
 
   const clock = new THREE.Clock();
 

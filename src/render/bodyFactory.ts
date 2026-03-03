@@ -105,10 +105,10 @@ function tuneMeshMaterial(mesh: THREE.Mesh, config: BodyVisualConfig): void {
         material.emissive = new THREE.Color("#FFFFFF");
         material.emissiveIntensity = 1.2;
       } else if (config.id === "sun") {
-        material.color = new THREE.Color("#FFD56D");
-        material.emissive = new THREE.Color("#FFCD59");
-        material.emissiveIntensity = 0.52;
-        material.roughness = 0.78;
+        material.color = new THREE.Color("#FFE08A");
+        material.emissive = new THREE.Color("#FFC94A");
+        material.emissiveIntensity = 0.94;
+        material.roughness = 0.64;
         material.metalness = 0;
       } else if (config.id === "mercury") {
         material.color = new THREE.Color("#8E8577");
@@ -156,9 +156,9 @@ function createFallbackSphere(config: BodyVisualConfig): THREE.Object3D {
   const geometry = new THREE.SphereGeometry(config.visualRadius, 48, 48);
   const material = new THREE.MeshStandardMaterial({
     color: new THREE.Color(config.color),
-    emissive: config.id === "sun" ? new THREE.Color("#FFCD59") : new THREE.Color("#000000"),
-    emissiveIntensity: config.id === "sun" ? 0.52 : 0,
-    roughness: config.id === "sun" ? 0.78 : 0.92,
+    emissive: config.id === "sun" ? new THREE.Color("#FFC94A") : new THREE.Color("#000000"),
+    emissiveIntensity: config.id === "sun" ? 0.74 : 0,
+    roughness: config.id === "sun" ? 0.64 : 0.92,
     metalness: config.id === "sun" ? 0.0 : 0.02,
   });
   return new THREE.Mesh(geometry, material);

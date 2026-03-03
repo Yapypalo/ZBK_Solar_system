@@ -240,6 +240,7 @@ body {
 .hud--collapsed .hud__section-title,
 .hud--collapsed .body-list,
 .hud--collapsed .hud__release,
+.hud--collapsed .hud__orbit-toggle,
 .hud--collapsed .hud__hint {
   display: none;
 }
@@ -327,6 +328,24 @@ body {
 .hud__release:hover {
   border-color: rgba(255, 157, 133, 0.95);
   box-shadow: 0 0 0 1px rgba(255, 112, 78, 0.35) inset;
+}
+
+.hud__orbit-toggle {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(84, 163, 255, 0.6);
+  background: rgba(7, 16, 34, 0.84);
+  color: var(--technical-white);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+
+.hud__orbit-toggle:hover {
+  border-color: rgba(113, 198, 255, 0.95);
+  box-shadow: 0 0 0 1px rgba(86, 184, 255, 0.32) inset;
 }
 
 .warning-stripe {
