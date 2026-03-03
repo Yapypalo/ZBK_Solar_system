@@ -9,6 +9,13 @@ const BASE_LINE_CORE_HALF_WIDTH_PX = 1.0;
 const BASE_LINE_FEATHER_PX = 1.4;
 const TRAIL_TOTAL_DEG = 329.0;
 const TERMINAL_FADE_START = 0.97;
+const ORBIT_DETAIL_LEVELS = {
+  high: { trailPointCount: 1536, basePointCount: 2560 },
+  mid: { trailPointCount: 1152, basePointCount: 2048 },
+  low: { trailPointCount: 768, basePointCount: 1536 },
+} as const;
+
+export type OrbitDetailTier = keyof typeof ORBIT_DETAIL_LEVELS;
 
 const ORBIT_VERTEX_SHADER = `
 uniform vec2 uResolution;
@@ -22,6 +29,7 @@ attribute float alpha;
 
 varying float vAlpha;
 varying float vSide;
+varying float vViewDepth;
 
 vec2 safeNormalize(vec2 value) {
   float valueLength = length(value);
@@ -32,7 +40,8 @@ vec2 safeNormalize(vec2 value) {
 }
 
 void main() {
-  vec4 currentClip = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  vec4 currentView = modelViewMatrix * vec4(position, 1.0);
+  vec4 currentClip = projectionMatrix * currentView;
   vec4 previousClip = projectionMatrix * modelViewMatrix * vec4(previous, 1.0);
   vec4 nextClip = projectionMatrix * modelViewMatrix * vec4(next, 1.0);
 
@@ -57,6 +66,7 @@ void main() {
   gl_Position = currentClip;
   vAlpha = alpha;
   vSide = side;
+  vViewDepth = -currentView.z;
 }
 `;
 
@@ -65,9 +75,12 @@ uniform vec3 uColor;
 uniform float uOpacity;
 uniform float uLineCoreHalfWidthPx;
 uniform float uLineFeatherPx;
+uniform float uDepthFadeNear;
+uniform float uDepthFadeFar;
 
 varying float vAlpha;
 varying float vSide;
+varying float vViewDepth;
 
 void main() {
   float totalHalfWidthPx = uLineCoreHalfWidthPx + uLineFeatherPx;
@@ -80,7 +93,8 @@ void main() {
   float aa = max(fwidth(distPx) * 1.5, 0.65);
   featherMask *= 1.0 - smoothstep(totalHalfWidthPx - aa, totalHalfWidthPx, distPx);
 
-  float finalAlpha = vAlpha * uOpacity * pow(featherMask, 1.05);
+  float depthFade = 1.0 - smoothstep(uDepthFadeNear, uDepthFadeFar, vViewDepth);
+  float finalAlpha = vAlpha * uOpacity * pow(featherMask, 1.05) * depthFade;
 
   if (finalAlpha <= 0.001) {
     discard;
@@ -96,10 +110,13 @@ export interface OrbitArcRuntime {
   geometry: THREE.BufferGeometry;
   material: THREE.ShaderMaterial;
   basePointsScene: Float32Array;
-  basePointCount: number;
+  maxBasePointCount: number;
+  activeBasePointCount: number;
   trailPositions: Float32Array;
   trailAlpha: Float32Array;
-  trailPointCount: number;
+  maxTrailPointCount: number;
+  activeTrailPointCount: number;
+  activeDetailTier: OrbitDetailTier;
   totalTrailRad: number;
   fadeDegrees: number;
   ribbonPositions: Float32Array;
@@ -138,6 +155,8 @@ function createRibbonMaterial(color: THREE.ColorRepresentation): THREE.ShaderMat
       uOpacity: { value: BASE_OPACITY },
       uLineCoreHalfWidthPx: { value: BASE_LINE_CORE_HALF_WIDTH_PX },
       uLineFeatherPx: { value: BASE_LINE_FEATHER_PX },
+      uDepthFadeNear: { value: 120.0 },
+      uDepthFadeFar: { value: 560.0 },
       uResolution: {
         value: new THREE.Vector2(
           Math.max(1, window.innerWidth),
@@ -236,18 +255,23 @@ function dropDuplicateClosingPoint(points: THREE.Vector3[]): THREE.Vector3[] {
 
 function sampleRingPoint(
   basePointsScene: Float32Array,
-  pointCount: number,
+  maxPointCount: number,
+  activePointCount: number,
   floatIndex: number,
   target: Float32Array,
   targetOffset: number,
 ): void {
-  const wrapped = ((floatIndex % pointCount) + pointCount) % pointCount;
+  const safeActivePointCount = Math.max(2, Math.min(activePointCount, maxPointCount));
+  const wrapped = ((floatIndex % safeActivePointCount) + safeActivePointCount) % safeActivePointCount;
   const lowIndex = Math.floor(wrapped);
-  const highIndex = (lowIndex + 1) % pointCount;
+  const highIndex = (lowIndex + 1) % safeActivePointCount;
   const blend = wrapped - lowIndex;
+  const detailStep = maxPointCount / safeActivePointCount;
+  const lowSourceIndex = Math.floor(lowIndex * detailStep) % maxPointCount;
+  const highSourceIndex = Math.floor(highIndex * detailStep) % maxPointCount;
 
-  const lowOffset = lowIndex * 3;
-  const highOffset = highIndex * 3;
+  const lowOffset = lowSourceIndex * 3;
+  const highOffset = highSourceIndex * 3;
 
   target[targetOffset] = THREE.MathUtils.lerp(
     basePointsScene[lowOffset],
@@ -272,7 +296,7 @@ export function createOrbitArcRuntime(
   color: THREE.ColorRepresentation,
   samples = 1440,
 ): OrbitArcRuntime {
-  const baseSampleCount = Math.max(2560, samples * 2);
+  const baseSampleCount = Math.max(ORBIT_DETAIL_LEVELS.high.basePointCount, samples * 2);
   const sampled = dropDuplicateClosingPoint(sampleOrbitPointsKm(orbit, baseSampleCount));
   const basePointsScene = new Float32Array(sampled.length * 3);
 
@@ -284,12 +308,13 @@ export function createOrbitArcRuntime(
     basePointsScene[offset + 2] = scaled.z;
   });
 
-  const trailPointCount = Math.max(1536, samples);
+  const trailPointCount = Math.max(ORBIT_DETAIL_LEVELS.high.trailPointCount, samples);
   const material = createRibbonMaterial(color);
   const ribbonGeometry = createRibbonGeometry(trailPointCount);
   const mesh = new THREE.Mesh(ribbonGeometry.geometry, material);
   mesh.frustumCulled = false;
   mesh.renderOrder = 1;
+  ribbonGeometry.geometry.setDrawRange(0, (ORBIT_DETAIL_LEVELS.high.trailPointCount - 1) * 6);
 
   return {
     bodyId,
@@ -297,10 +322,13 @@ export function createOrbitArcRuntime(
     geometry: ribbonGeometry.geometry,
     material,
     basePointsScene,
-    basePointCount: sampled.length,
+    maxBasePointCount: sampled.length,
+    activeBasePointCount: Math.min(sampled.length, ORBIT_DETAIL_LEVELS.high.basePointCount),
     trailPositions: new Float32Array(trailPointCount * 3),
     trailAlpha: new Float32Array(trailPointCount),
-    trailPointCount,
+    maxTrailPointCount: trailPointCount,
+    activeTrailPointCount: Math.min(trailPointCount, ORBIT_DETAIL_LEVELS.high.trailPointCount),
+    activeDetailTier: "high",
     totalTrailRad: degToRad(TRAIL_TOTAL_DEG),
     fadeDegrees: THREE.MathUtils.clamp(orbit.orbitGapDegrees ?? 45, 0, 359.5),
     ribbonPositions: ribbonGeometry.positions,
@@ -314,11 +342,23 @@ export function createOrbitArcRuntime(
   };
 }
 
+export function setOrbitDetailTier(runtime: OrbitArcRuntime, tier: OrbitDetailTier): void {
+  if (runtime.activeDetailTier === tier) {
+    return;
+  }
+
+  const profile = ORBIT_DETAIL_LEVELS[tier];
+  runtime.activeDetailTier = tier;
+  runtime.activeTrailPointCount = Math.min(runtime.maxTrailPointCount, profile.trailPointCount);
+  runtime.activeBasePointCount = Math.min(runtime.maxBasePointCount, profile.basePointCount);
+  runtime.geometry.setDrawRange(0, Math.max(0, runtime.activeTrailPointCount - 1) * 6);
+}
+
 export function updateOrbitArc(
   runtime: OrbitArcRuntime,
   currentTrueAnomalyRad: number,
 ): void {
-  if (runtime.basePointCount < 2) {
+  if (runtime.activeBasePointCount < 2 || runtime.activeTrailPointCount < 2) {
     runtime.mesh.visible = false;
     return;
   }
@@ -326,16 +366,17 @@ export function updateOrbitArc(
   const headAnomaly = normalizeAngleRadians(currentTrueAnomalyRad);
   const fadeStartDeg = 360 - runtime.fadeDegrees;
 
-  for (let pointIndex = 0; pointIndex < runtime.trailPointCount; pointIndex += 1) {
-    const progress = pointIndex / Math.max(1, runtime.trailPointCount - 1);
+  for (let pointIndex = 0; pointIndex < runtime.activeTrailPointCount; pointIndex += 1) {
+    const progress = pointIndex / Math.max(1, runtime.activeTrailPointCount - 1);
     const angleBehind = progress * runtime.totalTrailRad;
     const sampleAnomaly = normalizeAngleRadians(headAnomaly - angleBehind);
-    const floatIndex = (sampleAnomaly / TAU) * runtime.basePointCount;
+    const floatIndex = (sampleAnomaly / TAU) * runtime.activeBasePointCount;
     const targetOffset = pointIndex * 3;
 
     sampleRingPoint(
       runtime.basePointsScene,
-      runtime.basePointCount,
+      runtime.maxBasePointCount,
+      runtime.activeBasePointCount,
       floatIndex,
       runtime.trailPositions,
       targetOffset,
@@ -359,10 +400,10 @@ export function updateOrbitArc(
     runtime.trailAlpha[pointIndex] = fade;
   }
 
-  for (let pointIndex = 0; pointIndex < runtime.trailPointCount; pointIndex += 1) {
+  for (let pointIndex = 0; pointIndex < runtime.activeTrailPointCount; pointIndex += 1) {
     const currentOffset = pointIndex * 3;
     const previousOffset = Math.max(0, pointIndex - 1) * 3;
-    const nextOffset = Math.min(runtime.trailPointCount - 1, pointIndex + 1) * 3;
+    const nextOffset = Math.min(runtime.activeTrailPointCount - 1, pointIndex + 1) * 3;
     const pointAlpha = runtime.trailAlpha[pointIndex];
 
     const leftVertexOffset = pointIndex * 6;
@@ -406,6 +447,7 @@ export function updateOrbitArc(
   runtime.previousAttribute.needsUpdate = true;
   runtime.nextAttribute.needsUpdate = true;
   runtime.alphaAttribute.needsUpdate = true;
+  runtime.geometry.setDrawRange(0, Math.max(0, runtime.activeTrailPointCount - 1) * 6);
 }
 
 export function setOrbitVisualResolution(

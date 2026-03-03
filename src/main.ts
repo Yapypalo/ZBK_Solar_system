@@ -6,12 +6,13 @@ import { BODY_IDS, BODY_LIST } from "./data/bodies";
 import { createBodyVisual } from "./render/bodyFactory";
 import {
   createOrbitArcRuntime,
+  setOrbitDetailTier,
   setOrbitVisualResolution,
   updateOrbitArc,
+  type OrbitDetailTier,
   type OrbitArcRuntime,
 } from "./render/orbitMeshes";
-import { createPostProcessing } from "./render/postprocessing";
-import { createStarfield } from "./render/starfield";
+import { createStarfieldRuntime } from "./render/starfield";
 import { degToRad } from "./sim/orbitMath";
 import { propagateSystem } from "./sim/propagator";
 import { formatTimeScale, SimulationClock } from "./sim/time";
@@ -93,6 +94,10 @@ const MIN_HIT_RADIUS_PX = 18;
 const MAX_HIT_RADIUS_PX = 68;
 const HIT_RADIUS_SCALE = 2.25;
 const HUD_TOGGLE_IDLE_HIDE_MS = 2_000;
+const ORBIT_DETAIL_UPDATE_INTERVAL_SEC = 0.25;
+const ORBIT_DETAIL_HYSTERESIS = 20;
+const ORBIT_DETAIL_NEAR_THRESHOLD = 140;
+const ORBIT_DETAIL_FAR_THRESHOLD = 320;
 
 function createHud(app: HTMLElement): HudRefs {
   app.innerHTML = `
@@ -258,10 +263,8 @@ async function bootstrap(): Promise<void> {
   const hud = createHud(app);
   const engine = createEngine(hud.viewport);
   const controls = createSolarControls(engine.camera, engine.renderer.domElement);
-  const postProcessing = createPostProcessing(engine.renderer, engine.scene, engine.camera);
-
-  const starfield = createStarfield();
-  engine.scene.add(starfield);
+  const starfieldRuntime = createStarfieldRuntime();
+  engine.scene.add(starfieldRuntime.root);
 
   const simClock = new SimulationClock({
     currentDate: new Date(),
@@ -272,6 +275,7 @@ async function bootstrap(): Promise<void> {
 
   const runtimeBodies = new Map<BodyId, RuntimeBody>();
   const orbitArcs = new Map<BodyId, OrbitArcRuntime>();
+  const orbitParentBodies = new Map<BodyId, BodyId>();
   const latestPositions = {} as Record<BodyId, THREE.Vector3>;
   for (const bodyId of BODY_IDS) {
     latestPositions[bodyId] = new THREE.Vector3();
@@ -294,6 +298,7 @@ async function bootstrap(): Promise<void> {
 
     const orbitArc = createOrbitArcRuntime(config.id, config.orbit, config.color, 1024);
     orbitArcs.set(config.id, orbitArc);
+    orbitParentBodies.set(config.id, config.orbit.centralBody);
 
     const parentRuntime = runtimeBodies.get(config.orbit.centralBody);
     if (parentRuntime) {
@@ -301,6 +306,35 @@ async function bootstrap(): Promise<void> {
     } else {
       engine.scene.add(orbitArc.mesh);
     }
+  }
+
+  interface SunGlowLayer {
+    sprite: THREE.Sprite;
+    baseScale: number;
+  }
+
+  const sunGlowLayers: SunGlowLayer[] = [];
+  const sunRuntime = runtimeBodies.get("sun");
+  if (sunRuntime) {
+    const buildSunGlowLayer = (scaleMultiplier: number, opacity: number): SunGlowLayer => {
+      const material = new THREE.SpriteMaterial({
+        color: new THREE.Color("#FFCD74"),
+        transparent: true,
+        opacity,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      });
+      const sprite = new THREE.Sprite(material);
+      const baseScale = sunRuntime.config.visualRadius * scaleMultiplier;
+      sprite.scale.set(baseScale, baseScale, 1);
+      sunRuntime.spinner.add(sprite);
+      return { sprite, baseScale };
+    };
+
+    sunGlowLayers.push(buildSunGlowLayer(2.3, 0.16));
+    sunGlowLayers.push(buildSunGlowLayer(3.1, 0.08));
   }
 
   const focusState: FocusRuntimeState = {
@@ -710,11 +744,43 @@ async function bootstrap(): Promise<void> {
 
   window.addEventListener("keydown", onKeyDown);
 
+  const resolveOrbitDetailTier = (
+    distance: number,
+    currentTier: OrbitDetailTier,
+  ): OrbitDetailTier => {
+    if (currentTier === "high") {
+      return distance > ORBIT_DETAIL_NEAR_THRESHOLD + ORBIT_DETAIL_HYSTERESIS ? "mid" : "high";
+    }
+    if (currentTier === "mid") {
+      if (distance < ORBIT_DETAIL_NEAR_THRESHOLD - ORBIT_DETAIL_HYSTERESIS) {
+        return "high";
+      }
+      if (distance > ORBIT_DETAIL_FAR_THRESHOLD + ORBIT_DETAIL_HYSTERESIS) {
+        return "low";
+      }
+      return "mid";
+    }
+    return distance < ORBIT_DETAIL_FAR_THRESHOLD - ORBIT_DETAIL_HYSTERESIS ? "mid" : "low";
+  };
+
+  const updateAdaptiveOrbitDetail = (): void => {
+    for (const [bodyId, orbitArc] of orbitArcs) {
+      const parentBodyId = orbitParentBodies.get(bodyId);
+      if (!parentBodyId) {
+        continue;
+      }
+
+      const parentPosition = latestPositions[parentBodyId];
+      const distanceToParent = engine.camera.position.distanceTo(parentPosition);
+      const nextTier = resolveOrbitDetailTier(distanceToParent, orbitArc.activeDetailTier);
+      setOrbitDetailTier(orbitArc, nextTier);
+    }
+  };
+
   const onResize = (): void => {
     viewportWidth = hud.viewport.clientWidth || window.innerWidth;
     viewportHeight = hud.viewport.clientHeight || window.innerHeight;
     engine.setSize(viewportWidth, viewportHeight);
-    postProcessing.setSize(viewportWidth, viewportHeight);
 
     for (const orbitArc of orbitArcs.values()) {
       setOrbitVisualResolution(orbitArc, viewportWidth, viewportHeight);
@@ -727,7 +793,8 @@ async function bootstrap(): Promise<void> {
   let animationFrameId = 0;
   let smoothedFps = 60;
   let hudTimeAccumulator = 0;
-  let starfieldTime = 0;
+  let sunGlowTime = 0;
+  let orbitDetailAccumulator = ORBIT_DETAIL_UPDATE_INTERVAL_SEC;
 
   const animate = (): void => {
     animationFrameId = window.requestAnimationFrame(animate);
@@ -744,6 +811,12 @@ async function bootstrap(): Promise<void> {
       latestPositions[bodyId].copy(currentPosition);
       runtimeBody.tilt.rotation.z = degToRad(runtimeBody.config.spin.axialTiltDeg);
       runtimeBody.spinner.rotation.y = snapshot.spinAnglesRad[bodyId];
+    }
+
+    orbitDetailAccumulator += deltaSeconds;
+    if (orbitDetailAccumulator >= ORBIT_DETAIL_UPDATE_INTERVAL_SEC) {
+      orbitDetailAccumulator = 0;
+      updateAdaptiveOrbitDetail();
     }
 
     for (const [bodyId, orbitArc] of orbitArcs) {
@@ -800,18 +873,22 @@ async function bootstrap(): Promise<void> {
     }
 
     controls.update();
-    const stableStarfieldDelta = Math.min(deltaSeconds, 1 / 30);
-    starfieldTime += stableStarfieldDelta;
-    starfield.rotation.y = starfieldTime * 0.0012;
-    starfield.rotation.x = starfieldTime * 0.00035;
-    starfield.position.copy(engine.camera.position);
+    starfieldRuntime.update(deltaSeconds, engine.camera.position);
+
+    if (sunGlowLayers.length > 0) {
+      sunGlowTime += deltaSeconds;
+      const pulse = 1 + Math.sin(sunGlowTime * Math.PI * 2 * 0.12) * 0.06;
+      for (const layer of sunGlowLayers) {
+        layer.sprite.scale.set(layer.baseScale * pulse, layer.baseScale * pulse, 1);
+      }
+    }
 
     if (focusTransition.active && focusTransition.bodyId) {
       applyFocusComposition(focusTransition.bodyId);
     } else if (focusState.focusLocked && focusState.focusedBodyId) {
       applyFocusComposition(focusState.focusedBodyId);
     }
-    postProcessing.render();
+    engine.renderer.render(engine.scene, engine.camera);
 
     if (deltaSeconds > 0) {
       const instantaneousFps = 1 / deltaSeconds;
@@ -846,7 +923,10 @@ async function bootstrap(): Promise<void> {
     rendererDomElement.removeEventListener("pointerup", onPointerUp);
     rendererDomElement.removeEventListener("pointercancel", onPointerCancel);
     controls.dispose();
-    postProcessing.dispose();
+    starfieldRuntime.dispose();
+    for (const layer of sunGlowLayers) {
+      layer.sprite.material.dispose();
+    }
     engine.dispose();
 
     for (const orbitArc of orbitArcs.values()) {

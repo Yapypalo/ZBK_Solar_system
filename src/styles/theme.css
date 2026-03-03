@@ -22,7 +22,11 @@ body,
 
 body {
   overflow: hidden;
-  background: radial-gradient(circle at 20% 10%, #08132f 0%, #03040f 40%, #010106 100%);
+  background-color: #010106;
+  background-image: url("/assets/textures/space-bg.webp");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
   color: var(--technical-white);
   font-family: "Orbitron", "Rajdhani", "Segoe UI", sans-serif;
   letter-spacing: 0.04em;
