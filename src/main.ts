@@ -727,6 +727,7 @@ async function bootstrap(): Promise<void> {
   let animationFrameId = 0;
   let smoothedFps = 60;
   let hudTimeAccumulator = 0;
+  let starfieldTime = 0;
 
   const animate = (): void => {
     animationFrameId = window.requestAnimationFrame(animate);
@@ -798,10 +799,13 @@ async function bootstrap(): Promise<void> {
       }
     }
 
-    starfield.rotation.y += deltaSeconds * 0.0018;
-    starfield.rotation.x += deltaSeconds * 0.00045;
-
     controls.update();
+    const stableStarfieldDelta = Math.min(deltaSeconds, 1 / 30);
+    starfieldTime += stableStarfieldDelta;
+    starfield.rotation.y = starfieldTime * 0.0012;
+    starfield.rotation.x = starfieldTime * 0.00035;
+    starfield.position.copy(engine.camera.position);
+
     if (focusTransition.active && focusTransition.bodyId) {
       applyFocusComposition(focusTransition.bodyId);
     } else if (focusState.focusLocked && focusState.focusedBodyId) {

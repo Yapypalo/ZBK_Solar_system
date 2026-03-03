@@ -5,8 +5,8 @@ import { degToRad, normalizeAngleRadians, sampleOrbitPointsKm } from "../sim/orb
 
 const TAU = Math.PI * 2;
 const BASE_OPACITY = 0.72;
-const BASE_LINE_CORE_HALF_WIDTH_PX = 1.15;
-const BASE_LINE_FEATHER_PX = 1.1;
+const BASE_LINE_CORE_HALF_WIDTH_PX = 1.0;
+const BASE_LINE_FEATHER_PX = 1.4;
 const TRAIL_TOTAL_DEG = 329.0;
 const TERMINAL_FADE_START = 0.97;
 
@@ -40,11 +40,17 @@ void main() {
   vec2 previousNdc = previousClip.xy / max(abs(previousClip.w), 1e-5);
   vec2 nextNdc = nextClip.xy / max(abs(nextClip.w), 1e-5);
 
-  vec2 direction = safeNormalize(nextNdc - previousNdc);
-  vec2 normal = vec2(-direction.y, direction.x);
+  vec2 prevDir = safeNormalize(currentNdc - previousNdc);
+  vec2 nextDir = safeNormalize(nextNdc - currentNdc);
+  vec2 tangent = safeNormalize(prevDir + nextDir);
+  vec2 normal = vec2(-tangent.y, tangent.x);
+  vec2 prevNormal = vec2(-prevDir.y, prevDir.x);
+  float denom = max(abs(dot(normal, prevNormal)), 0.2);
+  float miterLength = min(1.0 / denom, 2.0);
+
   vec2 pixelToNdc = vec2(2.0 / uResolution.x, 2.0 / uResolution.y);
   float totalHalfWidthPx = uLineCoreHalfWidthPx + uLineFeatherPx;
-  vec2 offset = normal * side * totalHalfWidthPx * pixelToNdc;
+  vec2 offset = normal * side * totalHalfWidthPx * miterLength * pixelToNdc;
 
   currentClip.xy += offset * currentClip.w;
 
@@ -71,10 +77,10 @@ void main() {
   float featherMask = 1.0 - smoothstep(uLineCoreHalfWidthPx, totalHalfWidthPx, distPx);
 
   // Small derivative assist to avoid hard stepping on high-contrast backgrounds.
-  float aa = max(fwidth(distPx), 0.35);
+  float aa = max(fwidth(distPx) * 1.5, 0.65);
   featherMask *= 1.0 - smoothstep(totalHalfWidthPx - aa, totalHalfWidthPx, distPx);
 
-  float finalAlpha = vAlpha * uOpacity * featherMask;
+  float finalAlpha = vAlpha * uOpacity * pow(featherMask, 1.05);
 
   if (finalAlpha <= 0.001) {
     discard;
@@ -266,7 +272,7 @@ export function createOrbitArcRuntime(
   color: THREE.ColorRepresentation,
   samples = 1440,
 ): OrbitArcRuntime {
-  const baseSampleCount = Math.max(2048, samples * 2);
+  const baseSampleCount = Math.max(2560, samples * 2);
   const sampled = dropDuplicateClosingPoint(sampleOrbitPointsKm(orbit, baseSampleCount));
   const basePointsScene = new Float32Array(sampled.length * 3);
 
@@ -278,7 +284,7 @@ export function createOrbitArcRuntime(
     basePointsScene[offset + 2] = scaled.z;
   });
 
-  const trailPointCount = Math.max(1280, samples);
+  const trailPointCount = Math.max(1536, samples);
   const material = createRibbonMaterial(color);
   const ribbonGeometry = createRibbonGeometry(trailPointCount);
   const mesh = new THREE.Mesh(ribbonGeometry.geometry, material);
