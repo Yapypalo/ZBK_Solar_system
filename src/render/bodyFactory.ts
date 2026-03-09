@@ -10,6 +10,22 @@ import { normalizeModelToRadius } from "./modelNormalize";
 
 const loader = new GLTFLoader();
 
+interface ThermalProfile {
+  color: THREE.ColorRepresentation;
+  strength: number;
+  terminatorSoftness: number;
+}
+
+const THERMAL_PROFILES: Partial<Record<BodyVisualConfig["id"], ThermalProfile>> = {
+  mercury: { color: "#D9B38A", strength: 0.055, terminatorSoftness: 0.06 },
+  venus: { color: "#F0C48E", strength: 0.06, terminatorSoftness: 0.07 },
+  earth: { color: "#91BFFF", strength: 0.055, terminatorSoftness: 0.06 },
+  mars: { color: "#FF9D78", strength: 0.06, terminatorSoftness: 0.065 },
+  moon: { color: "#B7C4D4", strength: 0.045, terminatorSoftness: 0.055 },
+  phobos: { color: "#C6B296", strength: 0.04, terminatorSoftness: 0.055 },
+  deimos: { color: "#CDBFA4", strength: 0.04, terminatorSoftness: 0.055 },
+};
+
 export interface BodyVisualResult {
   visual: THREE.Object3D;
   loadState: ModelLoadState;
@@ -94,6 +110,75 @@ function buildFlattenedDeimosGroup(targetMesh: THREE.Mesh): THREE.Group | null {
   return group;
 }
 
+function applyTerminatorAndThermalPatch(
+  material: THREE.MeshStandardMaterial,
+  config: BodyVisualConfig,
+): void {
+  if (config.id === "sun") {
+    return;
+  }
+
+  const profile = THERMAL_PROFILES[config.id];
+  if (!profile) {
+    return;
+  }
+
+  if (material.userData.zbkTerminatorPatched === true) {
+    return;
+  }
+
+  material.userData.zbkTerminatorPatched = true;
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uZbkSunWorldPosition = { value: new THREE.Vector3(0, 0, 0) };
+    shader.uniforms.uZbkThermalColor = { value: new THREE.Color(profile.color) };
+    shader.uniforms.uZbkThermalStrength = { value: profile.strength };
+    shader.uniforms.uZbkTerminatorSoftness = { value: profile.terminatorSoftness };
+
+    shader.vertexShader = `
+varying vec3 vZbkWorldPos;
+varying vec3 vZbkWorldNormal;
+${shader.vertexShader}
+`;
+
+    shader.vertexShader = shader.vertexShader.replace(
+      "#include <worldpos_vertex>",
+      `#include <worldpos_vertex>
+  vZbkWorldPos = worldPosition.xyz;
+  vZbkWorldNormal = normalize(mat3(modelMatrix) * transformedNormal);`,
+    );
+
+    shader.fragmentShader = `
+uniform vec3 uZbkSunWorldPosition;
+uniform vec3 uZbkThermalColor;
+uniform float uZbkThermalStrength;
+uniform float uZbkTerminatorSoftness;
+varying vec3 vZbkWorldPos;
+varying vec3 vZbkWorldNormal;
+${shader.fragmentShader}
+`;
+
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <dithering_fragment>",
+      `vec3 zbkSunDir = normalize(uZbkSunWorldPosition - vZbkWorldPos);
+  float zbkNdotL = dot(normalize(vZbkWorldNormal), zbkSunDir);
+  float zbkTerminator = smoothstep(-uZbkTerminatorSoftness, 0.28 + uZbkTerminatorSoftness, zbkNdotL);
+  outgoingLight *= mix(0.34, 1.08, zbkTerminator);
+  outgoingLight += uZbkThermalColor * uZbkThermalStrength * (0.24 + 0.76 * zbkTerminator);
+  #include <dithering_fragment>`,
+    );
+  };
+
+  const cacheKey = [
+    "zbk-terminator",
+    config.id,
+    profile.color.toString(),
+    profile.strength.toFixed(4),
+    profile.terminatorSoftness.toFixed(4),
+  ].join(":");
+  material.customProgramCacheKey = () => cacheKey;
+  material.needsUpdate = true;
+}
+
 function tuneMeshMaterial(mesh: THREE.Mesh, config: BodyVisualConfig): void {
   const applyTuning = (material: THREE.Material): void => {
     if (material instanceof THREE.MeshStandardMaterial) {
@@ -105,10 +190,10 @@ function tuneMeshMaterial(mesh: THREE.Mesh, config: BodyVisualConfig): void {
         material.emissive = new THREE.Color("#FFFFFF");
         material.emissiveIntensity = 1.2;
       } else if (config.id === "sun") {
-        material.color = new THREE.Color("#FFE08A");
-        material.emissive = new THREE.Color("#FFC94A");
-        material.emissiveIntensity = 0.94;
-        material.roughness = 0.64;
+        material.color = new THREE.Color("#FFD56D");
+        material.emissive = new THREE.Color("#FFCD59");
+        material.emissiveIntensity = 0.52;
+        material.roughness = 0.78;
         material.metalness = 0;
       } else if (config.id === "mercury") {
         material.color = new THREE.Color("#8E8577");
@@ -128,6 +213,8 @@ function tuneMeshMaterial(mesh: THREE.Mesh, config: BodyVisualConfig): void {
       } else {
         material.envMapIntensity = 1.0;
       }
+
+      applyTerminatorAndThermalPatch(material, config);
       material.needsUpdate = true;
     }
   };

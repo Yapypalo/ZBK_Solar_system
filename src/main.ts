@@ -9,12 +9,18 @@ import {
   normalizeSpacecraftRecordForVisuals,
 } from "./data/spacecraftPhysics";
 import { createBodyVisual } from "./render/bodyFactory";
+import { createAtmosphereRim, type AtmosphereRimRuntime } from "./render/atmosphereRim";
 import {
   createOrbitArcRuntime,
   setOrbitVisualResolution,
   updateOrbitArc,
   type OrbitArcRuntime,
 } from "./render/orbitMeshes";
+import { createSelectionAccent } from "./render/selectionAccent";
+import {
+  createSpacecraftBeacons,
+  type SpacecraftBeaconsRuntime,
+} from "./render/spacecraftBeacons";
 import { createSpacecraftVisual, type SpacecraftVisualRuntime } from "./render/spacecraftFactory";
 import {
   createSpacecraftInstanceManager,
@@ -52,6 +58,7 @@ interface RuntimeBody {
   spinner: THREE.Group;
   visual: THREE.Object3D;
   modelLoadState: ModelLoadState;
+  rim: AtmosphereRimRuntime | null;
 }
 
 interface RuntimeSpacecraft {
@@ -136,6 +143,7 @@ const MIN_HIT_RADIUS_PX = 18;
 const MAX_HIT_RADIUS_PX = 68;
 const HIT_RADIUS_SCALE = 2.25;
 const HUD_TOGGLE_IDLE_HIDE_MS = 2_000;
+const HUD_IDLE_FADE_MS = 2_000;
 const SPACECRAFT_SOFT_LIMIT = 80;
 const SPACECRAFT_ORBIT_STYLE_UPDATE_INTERVAL_SEC = 0.2;
 
@@ -374,12 +382,16 @@ async function createRuntimeBody(
 
   const { visual, loadState } = await createBodyVisual(config, "1k");
   visual.name = `${config.id}-visual`;
+  const rim = config.id === "sun" ? null : createAtmosphereRim(config.id, config.visualRadius);
 
   spinner.add(visual);
+  if (rim) {
+    tilt.add(rim.mesh);
+  }
   tilt.add(spinner);
   root.add(tilt);
 
-  return { config, root, tilt, spinner, visual, modelLoadState: loadState };
+  return { config, root, tilt, spinner, visual, modelLoadState: loadState, rim };
 }
 
 async function bootstrap(): Promise<void> {
@@ -394,6 +406,8 @@ async function bootstrap(): Promise<void> {
   const starfieldRuntime = createStarfieldRuntime();
   engine.scene.add(starfieldRuntime.root);
   const spacecraftInstanceManager = createSpacecraftInstanceManager(engine.scene);
+  const selectionAccent = createSelectionAccent();
+  engine.scene.add(selectionAccent.mesh);
 
   const simClock = new SimulationClock({
     currentDate: new Date(),
@@ -405,6 +419,8 @@ async function bootstrap(): Promise<void> {
   const runtimeBodies = new Map<BodyId, RuntimeBody>();
   const orbitArcs = new Map<BodyId, OrbitArcRuntime>();
   const runtimeSpacecrafts: RuntimeSpacecraft[] = [];
+  let activeMissionId: string | null = null;
+  let activeMissionBeacons: SpacecraftBeaconsRuntime | null = null;
   const loadedSpacecraftRecords = loadSpacecraftRecords();
   let recordsWereNormalized = false;
   let spacecraftRecords = loadedSpacecraftRecords.map((record) => {
@@ -637,6 +653,45 @@ async function bootstrap(): Promise<void> {
     hud.missionEmpty.style.display = "block";
   };
 
+  const clearActiveMissionBeacons = (): void => {
+    if (!activeMissionBeacons) {
+      return;
+    }
+    activeMissionBeacons.group.parent?.remove(activeMissionBeacons.group);
+    activeMissionBeacons.dispose();
+    activeMissionBeacons = null;
+  };
+
+  const refreshActiveMissionBeacons = (): void => {
+    clearActiveMissionBeacons();
+    if (!activeMissionId) {
+      return;
+    }
+
+    const selectedRuntime = runtimeSpacecrafts.find(
+      (runtimeSpacecraft) => runtimeSpacecraft.record.id === activeMissionId,
+    );
+    if (!selectedRuntime) {
+      activeMissionId = null;
+      return;
+    }
+
+    const beacons = createSpacecraftBeacons(selectedRuntime.record);
+    const parentRuntime = runtimeBodies.get(selectedRuntime.record.orbit.attractorBodyId);
+    if (parentRuntime) {
+      parentRuntime.root.add(beacons.group);
+    } else {
+      engine.scene.add(beacons.group);
+    }
+    beacons.setVisible(orbitLinesVisible);
+    activeMissionBeacons = beacons;
+  };
+
+  const setActiveMission = (missionId: string | null): void => {
+    activeMissionId = missionId;
+    refreshActiveMissionBeacons();
+  };
+
   const renderMissionList = (bodyId: BodyId): void => {
     hud.missionList.innerHTML = "";
     const linked = runtimeSpacecrafts.filter((runtime) =>
@@ -652,6 +707,13 @@ async function bootstrap(): Promise<void> {
     for (const runtime of linked) {
       const item = document.createElement("article");
       item.className = "mission-item";
+      item.dataset.active = runtime.record.id === activeMissionId ? "true" : "false";
+      item.addEventListener("click", () => {
+        setActiveMission(runtime.record.id);
+        if (focusState.focusedBodyId) {
+          renderMissionList(focusState.focusedBodyId);
+        }
+      });
 
       const title = document.createElement("div");
       title.className = "mission-item__title";
@@ -814,6 +876,9 @@ async function bootstrap(): Promise<void> {
     spacecraftInstanceManager.release(runtimeSpacecraft.instanceHandle);
     runtimeSpacecraft.visual.dispose();
     runtimeSpacecrafts.splice(runtimeIndex, 1);
+    if (activeMissionId === spacecraftId) {
+      setActiveMission(null);
+    }
 
     spacecraftRecords = spacecraftRecords.filter((record) => record.id !== spacecraftId);
     saveSpacecraftRecords(spacecraftRecords);
@@ -827,6 +892,8 @@ async function bootstrap(): Promise<void> {
   };
 
   const clearAllSpacecraftRuntime = (): void => {
+    clearActiveMissionBeacons();
+    activeMissionId = null;
     for (const runtimeSpacecraft of runtimeSpacecrafts) {
       runtimeSpacecraft.visual.solidLine.parent?.remove(runtimeSpacecraft.visual.solidLine);
       runtimeSpacecraft.visual.dashedLine.parent?.remove(runtimeSpacecraft.visual.dashedLine);
@@ -948,6 +1015,7 @@ async function bootstrap(): Promise<void> {
       const normalizedRecord = addSpacecraftRuntime(record);
       spacecraftRecords = upsertSpacecraftRecord(spacecraftRecords, normalizedRecord);
       saveSpacecraftRecords(spacecraftRecords);
+      setActiveMission(normalizedRecord.id);
 
       hud.missionNameInput.value = "";
       hud.missionDescriptionInput.value = "";
@@ -1047,6 +1115,9 @@ async function bootstrap(): Promise<void> {
     for (const runtimeSpacecraft of runtimeSpacecrafts) {
       runtimeSpacecraft.visual.setOrbitVisible(visible);
     }
+    if (activeMissionBeacons) {
+      activeMissionBeacons.setVisible(visible);
+    }
     if (visible) {
       updateSpacecraftOrbitStyles();
     }
@@ -1119,6 +1190,39 @@ async function bootstrap(): Promise<void> {
 
   let hudHidden = false;
   let hudToggleHideTimer: number | null = null;
+  let hudIdleFadeTimer: number | null = null;
+
+  const setHudIdle = (idle: boolean): void => {
+    app.classList.toggle("hud-idle", idle);
+  };
+
+  const clearHudIdleFadeTimer = (): void => {
+    if (hudIdleFadeTimer !== null) {
+      window.clearTimeout(hudIdleFadeTimer);
+      hudIdleFadeTimer = null;
+    }
+  };
+
+  const scheduleHudIdleFade = (): void => {
+    clearHudIdleFadeTimer();
+    if (hudHidden) {
+      return;
+    }
+    hudIdleFadeTimer = window.setTimeout(() => {
+      hudIdleFadeTimer = null;
+      if (!hudHidden) {
+        setHudIdle(true);
+      }
+    }, HUD_IDLE_FADE_MS);
+  };
+
+  const registerHudActivity = (): void => {
+    if (hudHidden) {
+      return;
+    }
+    setHudIdle(false);
+    scheduleHudIdleFade();
+  };
 
   const setHudToggleGhosted = (ghosted: boolean): void => {
     hud.hudToggleButton.classList.toggle("hud-visibility-toggle--ghost", ghosted);
@@ -1158,11 +1262,14 @@ async function bootstrap(): Promise<void> {
     app.classList.toggle("hud-hidden", hidden);
     hud.hudToggleButton.textContent = hidden ? "HUD: OFF (H)" : "HUD: ON (H)";
     if (hidden) {
+      clearHudIdleFadeTimer();
+      setHudIdle(false);
       setHudToggleGhosted(false);
       scheduleHudToggleHide();
     } else {
       clearHudToggleHideTimer();
       setHudToggleGhosted(false);
+      scheduleHudIdleFade();
     }
   };
 
@@ -1170,6 +1277,7 @@ async function bootstrap(): Promise<void> {
     setHudHidden(!hudHidden);
   };
   hud.hudToggleButton.addEventListener("click", onToggleHud);
+  scheduleHudIdleFade();
 
   const rendererDomElement = engine.renderer.domElement;
   const resetPointerState = (): void => {
@@ -1221,10 +1329,12 @@ async function bootstrap(): Promise<void> {
 
   const onGlobalPointerMove = (): void => {
     registerHudHiddenActivity();
+    registerHudActivity();
   };
 
   const onGlobalPointerDown = (): void => {
     registerHudHiddenActivity();
+    registerHudActivity();
   };
 
   rendererDomElement.addEventListener("pointerdown", onPointerDown);
@@ -1236,6 +1346,7 @@ async function bootstrap(): Promise<void> {
 
   const onKeyDown = (event: KeyboardEvent): void => {
     registerHudHiddenActivity();
+    registerHudActivity();
 
     if (event.code === "Space") {
       event.preventDefault();
@@ -1337,6 +1448,7 @@ async function bootstrap(): Promise<void> {
     } else {
       orbitStyleUpdateAccumulator = 0;
     }
+    activeMissionBeacons?.update(deltaSeconds);
 
     if (focusTransition.active && focusTransition.bodyId) {
       focusTransition.elapsedSec += deltaSeconds;
@@ -1387,6 +1499,7 @@ async function bootstrap(): Promise<void> {
     }
 
     controls.update();
+    selectionAccent.update(deltaSeconds);
     starfieldRuntime.update(deltaSeconds, engine.camera.position);
 
     if (focusTransition.active && focusTransition.bodyId) {
@@ -1394,6 +1507,21 @@ async function bootstrap(): Promise<void> {
     } else if (focusState.focusLocked && focusState.focusedBodyId) {
       applyFocusComposition(focusState.focusedBodyId);
     }
+
+    const accentBodyId =
+      (focusTransition.active && focusTransition.bodyId) ||
+      (focusState.focusLocked ? focusState.focusedBodyId : null);
+    if (accentBodyId) {
+      const runtimeBody = runtimeBodies.get(accentBodyId);
+      if (runtimeBody) {
+        selectionAccent.setTarget(latestPositions[accentBodyId], runtimeBody.config.visualRadius);
+      } else {
+        selectionAccent.clear();
+      }
+    } else {
+      selectionAccent.clear();
+    }
+
     engine.renderer.render(engine.scene, engine.camera);
 
     if (deltaSeconds > 0) {
@@ -1416,6 +1544,7 @@ async function bootstrap(): Promise<void> {
   const onBeforeUnload = (): void => {
     window.cancelAnimationFrame(animationFrameId);
     clearHudToggleHideTimer();
+    clearHudIdleFadeTimer();
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("resize", onResize);
     window.removeEventListener("blur", onWindowBlur);
@@ -1435,12 +1564,18 @@ async function bootstrap(): Promise<void> {
     rendererDomElement.removeEventListener("pointerup", onPointerUp);
     rendererDomElement.removeEventListener("pointercancel", onPointerCancel);
     controls.dispose();
+    clearActiveMissionBeacons();
+    selectionAccent.dispose();
     starfieldRuntime.dispose();
     engine.dispose();
 
     for (const orbitArc of orbitArcs.values()) {
       orbitArc.geometry.dispose();
       orbitArc.material.dispose();
+    }
+
+    for (const runtimeBody of runtimeBodies.values()) {
+      runtimeBody.rim?.dispose();
     }
 
     for (const runtimeSpacecraft of runtimeSpacecrafts) {

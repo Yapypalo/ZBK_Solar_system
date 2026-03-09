@@ -66,9 +66,16 @@ uniform vec3 uColor;
 uniform float uOpacity;
 uniform float uLineCoreHalfWidthPx;
 uniform float uLineFeatherPx;
+uniform float uDitherStrength;
 
 varying float vAlpha;
 varying float vSide;
+
+float hash12(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
 
 void main() {
   float totalHalfWidthPx = uLineCoreHalfWidthPx + uLineFeatherPx;
@@ -79,6 +86,8 @@ void main() {
   featherMask *= 1.0 - smoothstep(totalHalfWidthPx - aa, totalHalfWidthPx, distPx);
 
   float finalAlpha = vAlpha * uOpacity * pow(featherMask, 1.05);
+  float dither = (hash12(gl_FragCoord.xy) - 0.5) * uDitherStrength;
+  finalAlpha *= (1.0 + dither);
 
   if (finalAlpha <= 0.001) {
     discard;
@@ -136,6 +145,7 @@ function createRibbonMaterial(color: THREE.ColorRepresentation): THREE.ShaderMat
       uOpacity: { value: BASE_OPACITY },
       uLineCoreHalfWidthPx: { value: BASE_LINE_CORE_HALF_WIDTH_PX },
       uLineFeatherPx: { value: BASE_LINE_FEATHER_PX },
+      uDitherStrength: { value: 0.06 },
       uResolution: {
         value: new THREE.Vector2(
           Math.max(1, window.innerWidth),
