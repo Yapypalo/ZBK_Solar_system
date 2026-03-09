@@ -59,6 +59,11 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function getOrbitPeriapsisKm(aKm: number, e: number): number {
+  const safeEccentricity = clamp(e, 0, 0.99);
+  return aKm * (1 - safeEccentricity);
+}
+
 function xfnv1aHash(input: string): number {
   let hash = 2166136261 >>> 0;
   for (let i = 0; i < input.length; i += 1) {
@@ -157,6 +162,25 @@ function getBodyDistanceToAttractorKm(
   return bodyPos.distanceTo(attractorPos) * KM_PER_SCENE_UNIT;
 }
 
+export function getBodySoiKm(bodyId: BodyId): number {
+  const bodyRadiusKm = BODY_RADIUS_KM[bodyId];
+  return BODY_SOI_KM[bodyId] ?? bodyRadiusKm * 280;
+}
+
+export function getBodyVisualRadiusKm(bodyId: BodyId): number {
+  return BODY_CONFIGS[bodyId].visualRadius * KM_PER_SCENE_UNIT;
+}
+
+export function computeMinVisualOrbitScale(
+  attractorBodyId: BodyId,
+  periapsisKm: number,
+): number {
+  const clampedPeriapsis = Math.max(periapsisKm, 1e-3);
+  const visualRadiusKm = getBodyVisualRadiusKm(attractorBodyId);
+  const rawScale = (visualRadiusKm * 1.15) / clampedPeriapsis;
+  return clamp(rawScale, 1, 100_000);
+}
+
 function buildOrbiterOrbit(
   primaryBodyId: BodyId,
   importance: MissionImportance,
@@ -164,7 +188,6 @@ function buildOrbiterOrbit(
 ): SpacecraftOrbitParams {
   const bodyRadiusKm = BODY_RADIUS_KM[primaryBodyId];
   const bodySoiKm = BODY_SOI_KM[primaryBodyId] ?? bodyRadiusKm * 280;
-  const visualRadiusKm = BODY_CONFIGS[primaryBodyId].visualRadius * KM_PER_SCENE_UNIT;
 
   const eccentricityRanges: Record<MissionImportance, [number, number]> = {
     1: [0.01, 0.12],
@@ -203,7 +226,7 @@ function buildOrbiterOrbit(
     iDeg = randomRange(rng, 98, 155);
   }
 
-  const orbitVisualScale = clamp((visualRadiusKm * 1.2) / rp, 1, 400);
+  const orbitVisualScale = computeMinVisualOrbitScale(primaryBodyId, rp);
 
   return {
     attractorBodyId: primaryBodyId,
@@ -268,6 +291,8 @@ function buildTransferOrbit(
   const baseRaan = referenceOrientation?.raanDeg ?? randomRange(rng, 0, 360);
   const baseArg = referenceOrientation?.argPeriapsisDeg ?? randomRange(rng, 0, 360);
   const startAtPeri = rPrimaryKm <= rSecondaryKm;
+  const periapsisKm = getOrbitPeriapsisKm(aKm, e);
+  const orbitVisualScale = computeMinVisualOrbitScale(attractorBodyId, periapsisKm);
 
   return {
     attractorBodyId,
@@ -278,6 +303,7 @@ function buildTransferOrbit(
     argPeriapsisDeg: (baseArg + randomRange(rng, -18, 18) + 360) % 360,
     meanAnomalyDegAtEpoch: (startAtPeri ? 0 : 180) + randomRange(rng, -10, 10),
     periodDays: computeOrbitalPeriodDays(aKm, attractorBodyId),
+    orbitVisualScale,
   };
 }
 
@@ -334,6 +360,30 @@ export function buildSpacecraftRecord(
     createdAtIso,
     seed,
     orbit,
+  };
+}
+
+export function normalizeSpacecraftRecordForVisuals(
+  record: SpacecraftRecord,
+): SpacecraftRecord {
+  const periapsisKm = getOrbitPeriapsisKm(record.orbit.aKm, record.orbit.e);
+  const minVisualScale = computeMinVisualOrbitScale(
+    record.orbit.attractorBodyId,
+    periapsisKm,
+  );
+  const currentVisualScale = record.orbit.orbitVisualScale ?? 1;
+  const nextVisualScale = Math.max(currentVisualScale, minVisualScale);
+
+  if (record.orbit.orbitVisualScale === nextVisualScale) {
+    return record;
+  }
+
+  return {
+    ...record,
+    orbit: {
+      ...record.orbit,
+      orbitVisualScale: nextVisualScale,
+    },
   };
 }
 

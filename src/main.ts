@@ -3,7 +3,11 @@ import { createSolarControls } from "./core/controls";
 import { createEngine } from "./core/engine";
 import { BODY_CARDS } from "./data/bodyCards";
 import { BODY_IDS, BODY_LIST } from "./data/bodies";
-import { buildSpacecraftRecord } from "./data/spacecraftPhysics";
+import {
+  buildSpacecraftRecord,
+  getBodySoiKm,
+  normalizeSpacecraftRecordForVisuals,
+} from "./data/spacecraftPhysics";
 import { createBodyVisual } from "./render/bodyFactory";
 import {
   createOrbitArcRuntime,
@@ -13,6 +17,7 @@ import {
 } from "./render/orbitMeshes";
 import { createSpacecraftVisual, type SpacecraftVisualRuntime } from "./render/spacecraftFactory";
 import { createStarfieldRuntime } from "./render/starfield";
+import { KM_PER_SCENE_UNIT } from "./sim/constants";
 import { degToRad } from "./sim/orbitMath";
 import { propagateSystem } from "./sim/propagator";
 import { getSpacecraftPositionScene } from "./sim/spacecraftPropagator";
@@ -118,6 +123,7 @@ const MAX_HIT_RADIUS_PX = 68;
 const HIT_RADIUS_SCALE = 2.25;
 const HUD_TOGGLE_IDLE_HIDE_MS = 2_000;
 const SPACECRAFT_SOFT_LIMIT = 80;
+const SPACECRAFT_ORBIT_STYLE_UPDATE_INTERVAL_SEC = 0.2;
 
 function createHud(app: HTMLElement): HudRefs {
   app.innerHTML = `
@@ -370,7 +376,18 @@ async function bootstrap(): Promise<void> {
   const runtimeBodies = new Map<BodyId, RuntimeBody>();
   const orbitArcs = new Map<BodyId, OrbitArcRuntime>();
   const runtimeSpacecrafts: RuntimeSpacecraft[] = [];
-  let spacecraftRecords = loadSpacecraftRecords();
+  const loadedSpacecraftRecords = loadSpacecraftRecords();
+  let recordsWereNormalized = false;
+  let spacecraftRecords = loadedSpacecraftRecords.map((record) => {
+    const normalizedRecord = normalizeSpacecraftRecordForVisuals(record);
+    if (normalizedRecord !== record) {
+      recordsWereNormalized = true;
+    }
+    return normalizedRecord;
+  });
+  if (recordsWereNormalized) {
+    saveSpacecraftRecords(spacecraftRecords);
+  }
   let orbitLinesVisible = true;
   const latestPositions = {} as Record<BodyId, THREE.Vector3>;
   for (const bodyId of BODY_IDS) {
@@ -690,19 +707,46 @@ async function bootstrap(): Promise<void> {
     return 1;
   };
 
-  const addSpacecraftRuntime = (record: SpacecraftRecord): void => {
+  const updateSpacecraftOrbitStyles = (): void => {
+    for (const runtimeSpacecraft of runtimeSpacecrafts) {
+      const attractorId = runtimeSpacecraft.record.orbit.attractorBodyId;
+      const attractorWorld = latestPositions[attractorId];
+      const linkedBodiesLocal: THREE.Vector3[] = [];
+      const soiRadiiScene: number[] = [];
+
+      for (const link of runtimeSpacecraft.record.links) {
+        const linkedRuntime = runtimeBodies.get(link.bodyId);
+        const visualSoiFloorScene = (linkedRuntime?.config.visualRadius ?? 0) * 1.15;
+        linkedBodiesLocal.push(
+          latestPositions[link.bodyId].clone().sub(attractorWorld),
+        );
+        soiRadiiScene.push(
+          Math.max(getBodySoiKm(link.bodyId) / KM_PER_SCENE_UNIT, visualSoiFloorScene),
+        );
+      }
+
+      runtimeSpacecraft.visual.updateOrbitStyle(linkedBodiesLocal, soiRadiiScene);
+    }
+  };
+
+  const addSpacecraftRuntime = (record: SpacecraftRecord): SpacecraftRecord => {
+    const normalizedRecord = normalizeSpacecraftRecordForVisuals(record);
     const lowDetailMode = runtimeSpacecrafts.length >= SPACECRAFT_SOFT_LIMIT;
-    const visual = createSpacecraftVisual(record, lowDetailMode);
-    const parentRuntime = runtimeBodies.get(record.orbit.attractorBodyId);
+    const visual = createSpacecraftVisual(normalizedRecord, lowDetailMode);
+    const parentRuntime = runtimeBodies.get(normalizedRecord.orbit.attractorBodyId);
     if (parentRuntime) {
       parentRuntime.root.add(visual.root);
-      parentRuntime.root.add(visual.orbitLine);
+      parentRuntime.root.add(visual.solidLine);
+      parentRuntime.root.add(visual.dashedLine);
     } else {
       engine.scene.add(visual.root);
-      engine.scene.add(visual.orbitLine);
+      engine.scene.add(visual.solidLine);
+      engine.scene.add(visual.dashedLine);
     }
-    visual.orbitLine.visible = orbitLinesVisible;
-    runtimeSpacecrafts.push({ record, visual });
+    visual.setOrbitVisible(orbitLinesVisible);
+    runtimeSpacecrafts.push({ record: normalizedRecord, visual });
+    updateSpacecraftOrbitStyles();
+    return normalizedRecord;
   };
 
   const clearCard = (): void => {
@@ -796,8 +840,8 @@ async function bootstrap(): Promise<void> {
         },
       );
 
-      addSpacecraftRuntime(record);
-      spacecraftRecords = upsertSpacecraftRecord(spacecraftRecords, record);
+      const normalizedRecord = addSpacecraftRuntime(record);
+      spacecraftRecords = upsertSpacecraftRecord(spacecraftRecords, normalizedRecord);
       saveSpacecraftRecords(spacecraftRecords);
 
       hud.missionNameInput.value = "";
@@ -821,8 +865,8 @@ async function bootstrap(): Promise<void> {
   const validLoadedRecords: SpacecraftRecord[] = [];
   for (const record of spacecraftRecords) {
     try {
-      addSpacecraftRuntime(record);
-      validLoadedRecords.push(record);
+      const normalizedRecord = addSpacecraftRuntime(record);
+      validLoadedRecords.push(normalizedRecord);
     } catch (error) {
       console.warn("Skipped invalid spacecraft record.", error);
     }
@@ -863,7 +907,10 @@ async function bootstrap(): Promise<void> {
       orbitArc.mesh.visible = visible;
     }
     for (const runtimeSpacecraft of runtimeSpacecrafts) {
-      runtimeSpacecraft.visual.orbitLine.visible = visible;
+      runtimeSpacecraft.visual.setOrbitVisible(visible);
+    }
+    if (visible) {
+      updateSpacecraftOrbitStyles();
     }
   };
 
@@ -1093,6 +1140,7 @@ async function bootstrap(): Promise<void> {
   let animationFrameId = 0;
   let smoothedFps = 60;
   let hudTimeAccumulator = 0;
+  let orbitStyleUpdateAccumulator = 0;
 
   const animate = (): void => {
     animationFrameId = window.requestAnimationFrame(animate);
@@ -1133,6 +1181,16 @@ async function bootstrap(): Promise<void> {
       }
       runtimeSpacecraft.visual.root.position.copy(absolutePosition);
       runtimeSpacecraft.visual.root.rotation.y += deltaSeconds * 0.8;
+    }
+
+    if (orbitLinesVisible) {
+      orbitStyleUpdateAccumulator += deltaSeconds;
+      if (orbitStyleUpdateAccumulator >= SPACECRAFT_ORBIT_STYLE_UPDATE_INTERVAL_SEC) {
+        orbitStyleUpdateAccumulator = 0;
+        updateSpacecraftOrbitStyles();
+      }
+    } else {
+      orbitStyleUpdateAccumulator = 0;
     }
 
     if (focusTransition.active && focusTransition.bodyId) {
