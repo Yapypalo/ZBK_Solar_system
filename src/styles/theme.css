@@ -542,6 +542,29 @@ body {
   line-height: 1.45;
 }
 
+.mission-item__actions {
+  margin-top: 6px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.mission-item__delete {
+  border: 1px solid rgba(252, 61, 33, 0.6);
+  background: rgba(35, 9, 7, 0.82);
+  color: #ffd8cf;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  padding: 4px 7px;
+  cursor: pointer;
+}
+
+.mission-item__delete:hover {
+  border-color: rgba(255, 154, 132, 0.95);
+  box-shadow: 0 0 0 1px rgba(255, 132, 102, 0.2) inset;
+}
+
 .mission-form {
   margin-top: 12px;
   border: 1px solid rgba(86, 157, 255, 0.32);

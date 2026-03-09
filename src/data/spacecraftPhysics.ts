@@ -64,6 +64,11 @@ function getOrbitPeriapsisKm(aKm: number, e: number): number {
   return aKm * (1 - safeEccentricity);
 }
 
+function getOrbitApoapsisKm(aKm: number, e: number): number {
+  const safeEccentricity = clamp(e, 0, 0.99);
+  return aKm * (1 + safeEccentricity);
+}
+
 function xfnv1aHash(input: string): number {
   let hash = 2166136261 >>> 0;
   for (let i = 0; i < input.length; i += 1) {
@@ -181,52 +186,210 @@ export function computeMinVisualOrbitScale(
   return clamp(rawScale, 1, 100_000);
 }
 
+function estimateDistanceToAttractorKm(
+  bodyId: BodyId,
+  attractorBodyId: BodyId,
+): number | null {
+  if (bodyId === attractorBodyId) {
+    return 0;
+  }
+
+  const visited = new Set<BodyId>();
+  let current: BodyId = bodyId;
+  let totalDistance = 0;
+
+  while (!visited.has(current)) {
+    visited.add(current);
+    const orbit = BODY_CONFIGS[current].orbit;
+    if (!orbit) {
+      return null;
+    }
+
+    totalDistance += orbit.aKm;
+    if (orbit.centralBody === attractorBodyId) {
+      return totalDistance;
+    }
+
+    current = orbit.centralBody;
+  }
+
+  return null;
+}
+
+function getMinimumOrbitAltitudeKm(bodyId: BodyId): number {
+  const bodyRadiusKm = BODY_RADIUS_KM[bodyId];
+  if (bodyId === "sun") {
+    return bodyRadiusKm * 0.06;
+  }
+  return Math.max(20, bodyRadiusKm * 0.015);
+}
+
+function getMinimumOrbitRadiusKm(bodyId: BodyId): number {
+  return BODY_RADIUS_KM[bodyId] + getMinimumOrbitAltitudeKm(bodyId);
+}
+
+function getMaximumOrbitRadiusInsideSoiKm(bodyId: BodyId): number {
+  return getBodySoiKm(bodyId) * 0.92;
+}
+
+function getGeostationaryRadiusKm(bodyId: BodyId): number | null {
+  const mu = BODY_MU_KM3_S2[bodyId];
+  if (!mu || mu <= 0) {
+    return null;
+  }
+
+  const rotationHours = Math.abs(BODY_CONFIGS[bodyId].spin.rotationPeriodHours);
+  if (!Number.isFinite(rotationHours) || rotationHours <= 0) {
+    return null;
+  }
+
+  const periodSeconds = rotationHours * 3_600;
+  const radiusKm = Math.cbrt((mu * periodSeconds * periodSeconds) / (4 * Math.PI * Math.PI));
+  return Number.isFinite(radiusKm) ? radiusKm : null;
+}
+
+function getEccentricityRange(importance: MissionImportance): [number, number] {
+  if (importance === 1) {
+    return [0, 0.35];
+  }
+  if (importance === 2) {
+    return [0, 0.8];
+  }
+  return [0.55, 0.95];
+}
+
+function sampleInclinationDeg(
+  importance: MissionImportance,
+  rng: () => number,
+): number {
+  if (importance === 1) {
+    return rng() < 0.5 ? randomRange(rng, 87, 97) : randomRange(rng, -15, 15);
+  }
+  if (importance === 2) {
+    return randomRange(rng, -180, 180);
+  }
+  if (rng() < 0.65) {
+    return randomRange(rng, 100, 180);
+  }
+  return randomRange(rng, -180, 180);
+}
+
+function pickTransferRadiiForEccentricity(
+  innerTargetKm: number,
+  outerTargetKm: number,
+  eccentricity: number,
+  minRadiusKm: number,
+  maxRadiusKm: number,
+): { rpKm: number; raKm: number } {
+  const safeE = clamp(eccentricity, 0, 0.99);
+
+  let rpA = clamp(innerTargetKm, minRadiusKm, maxRadiusKm * 0.999);
+  let raA = rpA * (1 + safeE) / Math.max(1 - safeE, 1e-6);
+  if (raA > maxRadiusKm) {
+    raA = maxRadiusKm;
+    rpA = raA * (1 - safeE) / (1 + safeE);
+  }
+  if (rpA < minRadiusKm) {
+    rpA = minRadiusKm;
+    raA = rpA * (1 + safeE) / Math.max(1 - safeE, 1e-6);
+    raA = Math.min(raA, maxRadiusKm);
+  }
+  const errA =
+    Math.abs(rpA - innerTargetKm) / Math.max(innerTargetKm, 1) +
+    Math.abs(raA - outerTargetKm) / Math.max(outerTargetKm, 1);
+
+  let raB = clamp(outerTargetKm, minRadiusKm * 1.01, maxRadiusKm);
+  let rpB = raB * (1 - safeE) / (1 + safeE);
+  if (rpB < minRadiusKm) {
+    rpB = minRadiusKm;
+    raB = rpB * (1 + safeE) / Math.max(1 - safeE, 1e-6);
+  }
+  if (raB > maxRadiusKm) {
+    raB = maxRadiusKm;
+    rpB = raB * (1 - safeE) / (1 + safeE);
+  }
+  const errB =
+    Math.abs(rpB - innerTargetKm) / Math.max(innerTargetKm, 1) +
+    Math.abs(raB - outerTargetKm) / Math.max(outerTargetKm, 1);
+
+  if (errA <= errB) {
+    return { rpKm: rpA, raKm: raA };
+  }
+  return { rpKm: rpB, raKm: raB };
+}
+
 function buildOrbiterOrbit(
   primaryBodyId: BodyId,
   importance: MissionImportance,
   rng: () => number,
 ): SpacecraftOrbitParams {
-  const bodyRadiusKm = BODY_RADIUS_KM[primaryBodyId];
-  const bodySoiKm = BODY_SOI_KM[primaryBodyId] ?? bodyRadiusKm * 280;
+  const minRadiusKm = getMinimumOrbitRadiusKm(primaryBodyId);
+  const maxRadiusKm = Math.max(
+    minRadiusKm * 1.04,
+    getMaximumOrbitRadiusInsideSoiKm(primaryBodyId),
+  );
+  const [eMin, eMax] = getEccentricityRange(importance);
 
-  const eccentricityRanges: Record<MissionImportance, [number, number]> = {
-    1: [0.01, 0.12],
-    2: [0.1, 0.35],
-    3: [0.35, 0.72],
-  };
-  const inclinationRanges: Record<MissionImportance, [number, number]> = {
-    1: [0, 18],
-    2: [10, 45],
-    3: [25, 85],
-  };
+  let rpKm = minRadiusKm;
+  let raKm = minRadiusKm * 1.02;
+  let e = 0;
 
-  const pericenterFactorRanges: Record<MissionImportance, [number, number]> = {
-    1: [1.12, 1.85],
-    2: [1.4, 3.2],
-    3: [2.4, 9.4],
-  };
+  if (importance === 1) {
+    const geoRadiusKm = getGeostationaryRadiusKm(primaryBodyId);
+    const geoUsable =
+      geoRadiusKm !== null &&
+      geoRadiusKm > minRadiusKm * 1.01 &&
+      geoRadiusKm < maxRadiusKm * 0.995;
 
-  const rpMin = bodyRadiusKm * 1.25;
-  const rp = rpMin * randomRange(rng, ...pericenterFactorRanges[importance]);
-  let e = randomRange(rng, ...eccentricityRanges[importance]);
-  let ra = (rp * (1 + e)) / (1 - e);
-
-  let raMax = Math.min(bodySoiKm * 0.7, bodyRadiusKm * 120);
-  if (raMax <= rp * 1.05) {
-    raMax = rp * 1.35;
+    if (geoUsable && rng() < 0.2) {
+      rpKm = geoRadiusKm;
+      raKm = geoRadiusKm;
+      e = 0;
+    } else {
+      e = randomRange(rng, eMin, eMax);
+      const upperRadiusKm = geoUsable
+        ? Math.min(geoRadiusKm as number, maxRadiusKm * 0.98)
+        : maxRadiusKm * 0.7;
+      rpKm = randomRange(rng, minRadiusKm, Math.max(minRadiusKm * 1.02, upperRadiusKm));
+      raKm = rpKm * (1 + e) / Math.max(1 - e, 1e-6);
+      if (raKm > upperRadiusKm) {
+        raKm = upperRadiusKm;
+        e = clamp((raKm - rpKm) / Math.max(raKm + rpKm, 1e-6), eMin, eMax);
+      }
+    }
+  } else if (importance === 2) {
+    e = randomRange(rng, eMin, eMax);
+    rpKm = randomRange(rng, minRadiusKm, maxRadiusKm * 0.8);
+    raKm = rpKm * (1 + e) / Math.max(1 - e, 1e-6);
+    if (raKm > maxRadiusKm) {
+      raKm = maxRadiusKm;
+      e = clamp((raKm - rpKm) / Math.max(raKm + rpKm, 1e-6), eMin, eMax);
+    }
+  } else {
+    rpKm = randomRange(rng, minRadiusKm, maxRadiusKm * 0.35);
+    raKm = randomRange(rng, Math.max(rpKm * 1.2, maxRadiusKm * 0.68), maxRadiusKm);
+    e = clamp((raKm - rpKm) / Math.max(raKm + rpKm, 1e-6), eMin, eMax);
+    if (e < 0.62) {
+      const targetE = randomRange(rng, 0.62, eMax);
+      raKm = Math.min(maxRadiusKm, rpKm * (1 + targetE) / Math.max(1 - targetE, 1e-6));
+      e = clamp((raKm - rpKm) / Math.max(raKm + rpKm, 1e-6), eMin, eMax);
+    }
   }
-  if (ra > raMax) {
-    ra = raMax;
-    e = clamp((ra - rp) / (ra + rp), eccentricityRanges[importance][0], eccentricityRanges[importance][1]);
-  }
 
-  const aKm = (rp + ra) / 2;
-  let iDeg = randomRange(rng, ...inclinationRanges[importance]);
-  if (importance === 3 && rng() < 0.25) {
-    iDeg = randomRange(rng, 98, 155);
+  if (raKm > maxRadiusKm) {
+    raKm = maxRadiusKm;
   }
+  if (rpKm < minRadiusKm) {
+    rpKm = minRadiusKm;
+  }
+  if (raKm <= rpKm) {
+    raKm = Math.min(maxRadiusKm, rpKm * 1.02);
+  }
+  e = clamp((raKm - rpKm) / Math.max(raKm + rpKm, 1e-6), eMin, eMax);
 
-  const orbitVisualScale = computeMinVisualOrbitScale(primaryBodyId, rp);
+  const aKm = (rpKm + raKm) / 2;
+  const iDeg = sampleInclinationDeg(importance, rng);
+  const orbitVisualScale = computeMinVisualOrbitScale(primaryBodyId, rpKm);
 
   return {
     attractorBodyId: primaryBodyId,
@@ -249,50 +412,85 @@ function buildTransferOrbit(
   positionsScene: Record<BodyId, THREE.Vector3>,
 ): SpacecraftOrbitParams {
   const attractorBodyId = resolveCommonAttractor(primaryBodyId, secondaryBodyId);
-  const rPrimaryKm = getBodyDistanceToAttractorKm(primaryBodyId, attractorBodyId, positionsScene);
-  const rSecondaryKm = getBodyDistanceToAttractorKm(secondaryBodyId, attractorBodyId, positionsScene);
-  const minR = Math.min(rPrimaryKm, rSecondaryKm);
-  const maxR = Math.max(rPrimaryKm, rSecondaryKm);
+  const minRadiusKm = getMinimumOrbitRadiusKm(attractorBodyId);
+  const maxRadiusKm = Math.max(
+    minRadiusKm * 1.04,
+    getMaximumOrbitRadiusInsideSoiKm(attractorBodyId),
+  );
+  const [eMin, eMax] = getEccentricityRange(importance);
 
-  const eAdjust: Record<MissionImportance, number> = { 1: 0.02, 2: 0.08, 3: 0.15 };
-  let e = clamp(Math.abs(maxR - minR) / (maxR + minR) + eAdjust[importance], 0.02, 0.82);
-  let aKm = minR / (1 - e);
-  let ra = aKm * (1 + e);
-
-  const soiCap = BODY_SOI_KM[attractorBodyId];
-  if (soiCap && attractorBodyId !== "sun") {
-    const raCap = soiCap * 0.8;
-    if (ra > raCap) {
-      ra = raCap;
-      e = clamp((ra - minR) / (ra + minR), 0.02, 0.82);
-      aKm = minR / (1 - e);
-    }
+  const rPrimaryKm = getBodyDistanceToAttractorKm(
+    primaryBodyId,
+    attractorBodyId,
+    positionsScene,
+  );
+  const rSecondaryKm = getBodyDistanceToAttractorKm(
+    secondaryBodyId,
+    attractorBodyId,
+    positionsScene,
+  );
+  const targetPrimaryKm = rPrimaryKm + getMinimumOrbitAltitudeKm(primaryBodyId);
+  const targetSecondaryKm = rSecondaryKm + getMinimumOrbitAltitudeKm(secondaryBodyId);
+  let innerTargetKm = Math.max(minRadiusKm, Math.min(targetPrimaryKm, targetSecondaryKm));
+  let outerTargetKm = Math.min(maxRadiusKm, Math.max(targetPrimaryKm, targetSecondaryKm));
+  if (outerTargetKm <= innerTargetKm * 1.01) {
+    outerTargetKm = Math.min(maxRadiusKm, innerTargetKm * 1.05);
   }
+
+  const eTarget = (outerTargetKm - innerTargetKm) / Math.max(outerTargetKm + innerTargetKm, 1e-6);
+  let e = clamp(eTarget, eMin, eMax);
+  if (importance === 3) {
+    e = Math.max(e, randomRange(rng, 0.62, eMax));
+  }
+  const radii = pickTransferRadiiForEccentricity(
+    innerTargetKm,
+    outerTargetKm,
+    e,
+    minRadiusKm,
+    maxRadiusKm,
+  );
+  let rpKm = radii.rpKm;
+  let raKm = radii.raKm;
+
+  if (raKm <= rpKm) {
+    raKm = Math.min(maxRadiusKm, rpKm * 1.02);
+  }
+  if (rpKm < minRadiusKm) {
+    rpKm = minRadiusKm;
+  }
+  if (raKm > maxRadiusKm) {
+    raKm = maxRadiusKm;
+  }
+
+  e = clamp((raKm - rpKm) / Math.max(raKm + rpKm, 1e-6), eMin, eMax);
+  const aKm = (rpKm + raKm) / 2;
 
   const referenceOrientation =
     getReferenceOrientation(primaryBodyId, attractorBodyId) ??
     getReferenceOrientation(secondaryBodyId, attractorBodyId);
 
-  const inclinationJitterByImportance: Record<MissionImportance, number> = {
-    1: 4,
-    2: 12,
-    3: 28,
-  };
-  const baseI = referenceOrientation?.iDeg ?? randomRange(rng, 0, 24);
-  let iDeg = clamp(
-    baseI + randomRange(rng, -inclinationJitterByImportance[importance], inclinationJitterByImportance[importance]),
-    0,
-    175,
-  );
-  if (importance === 3 && rng() < 0.25) {
-    iDeg = clamp(randomRange(rng, 100, 160), 100, 170);
+  let iDeg = sampleInclinationDeg(importance, rng);
+  if (referenceOrientation) {
+    iDeg = clamp(
+      referenceOrientation.iDeg + randomRange(rng, -8, 8),
+      -180,
+      180,
+    );
+    if (importance === 2) {
+      iDeg = clamp(
+        referenceOrientation.iDeg + randomRange(rng, -45, 45),
+        -180,
+        180,
+      );
+    }
+    if (importance === 3 && rng() < 0.45) {
+      iDeg = sampleInclinationDeg(importance, rng);
+    }
   }
 
   const baseRaan = referenceOrientation?.raanDeg ?? randomRange(rng, 0, 360);
   const baseArg = referenceOrientation?.argPeriapsisDeg ?? randomRange(rng, 0, 360);
-  const startAtPeri = rPrimaryKm <= rSecondaryKm;
-  const periapsisKm = getOrbitPeriapsisKm(aKm, e);
-  const orbitVisualScale = computeMinVisualOrbitScale(attractorBodyId, periapsisKm);
+  const orbitVisualScale = computeMinVisualOrbitScale(attractorBodyId, rpKm);
 
   return {
     attractorBodyId,
@@ -301,7 +499,7 @@ function buildTransferOrbit(
     iDeg,
     raanDeg: (baseRaan + randomRange(rng, -12, 12) + 360) % 360,
     argPeriapsisDeg: (baseArg + randomRange(rng, -18, 18) + 360) % 360,
-    meanAnomalyDegAtEpoch: (startAtPeri ? 0 : 180) + randomRange(rng, -10, 10),
+    meanAnomalyDegAtEpoch: randomRange(rng, -6, 6),
     periodDays: computeOrbitalPeriodDays(aKm, attractorBodyId),
     orbitVisualScale,
   };
@@ -366,24 +564,101 @@ export function buildSpacecraftRecord(
 export function normalizeSpacecraftRecordForVisuals(
   record: SpacecraftRecord,
 ): SpacecraftRecord {
-  const periapsisKm = getOrbitPeriapsisKm(record.orbit.aKm, record.orbit.e);
+  let nextOrbit = { ...record.orbit };
+  const attractorBodyId = nextOrbit.attractorBodyId;
+  const minRadiusKm = getMinimumOrbitRadiusKm(attractorBodyId);
+  const maxRadiusKm = Math.max(
+    minRadiusKm * 1.04,
+    getMaximumOrbitRadiusInsideSoiKm(attractorBodyId),
+  );
+
+  let rpKm = getOrbitPeriapsisKm(nextOrbit.aKm, nextOrbit.e);
+  let raKm = getOrbitApoapsisKm(nextOrbit.aKm, nextOrbit.e);
+  const [eMin, eMax] = getEccentricityRange(record.importance);
+
+  if (record.kind === "transfer" && record.links.length >= 2) {
+    const primaryLink = record.links.find((link) => link.role === "primary") ?? record.links[0];
+    const secondaryLink = record.links.find((link) => link.role === "secondary") ?? record.links[1];
+    const primaryDistanceKm =
+      estimateDistanceToAttractorKm(primaryLink.bodyId, attractorBodyId) ?? rpKm;
+    const secondaryDistanceKm =
+      estimateDistanceToAttractorKm(secondaryLink.bodyId, attractorBodyId) ?? rpKm;
+    let innerTargetKm = Math.max(
+      minRadiusKm,
+      Math.min(
+        primaryDistanceKm + getMinimumOrbitAltitudeKm(primaryLink.bodyId),
+        secondaryDistanceKm + getMinimumOrbitAltitudeKm(secondaryLink.bodyId),
+      ),
+    );
+    let outerTargetKm = Math.min(
+      maxRadiusKm,
+      Math.max(
+        primaryDistanceKm + getMinimumOrbitAltitudeKm(primaryLink.bodyId),
+        secondaryDistanceKm + getMinimumOrbitAltitudeKm(secondaryLink.bodyId),
+      ),
+    );
+    if (outerTargetKm <= innerTargetKm * 1.01) {
+      outerTargetKm = Math.min(maxRadiusKm, innerTargetKm * 1.05);
+    }
+
+    const eTarget = clamp(
+      (outerTargetKm - innerTargetKm) / Math.max(outerTargetKm + innerTargetKm, 1e-6),
+      eMin,
+      eMax,
+    );
+    const targetRadii = pickTransferRadiiForEccentricity(
+      innerTargetKm,
+      outerTargetKm,
+      eTarget,
+      minRadiusKm,
+      maxRadiusKm,
+    );
+    rpKm = Math.max(rpKm, targetRadii.rpKm);
+    raKm = Math.max(raKm, targetRadii.raKm);
+  }
+
+  rpKm = clamp(rpKm, minRadiusKm, maxRadiusKm * 0.999);
+  raKm = clamp(raKm, rpKm * 1.01, maxRadiusKm);
+
+  let e = (raKm - rpKm) / Math.max(raKm + rpKm, 1e-6);
+  if (e < eMin || e > eMax) {
+    const clampedE = clamp(e, eMin, eMax);
+    raKm = rpKm * (1 + clampedE) / Math.max(1 - clampedE, 1e-6);
+    if (raKm > maxRadiusKm) {
+      raKm = maxRadiusKm;
+      rpKm = raKm * (1 - clampedE) / (1 + clampedE);
+    }
+    rpKm = clamp(rpKm, minRadiusKm, maxRadiusKm * 0.999);
+    raKm = clamp(raKm, rpKm * 1.01, maxRadiusKm);
+    e = (raKm - rpKm) / Math.max(raKm + rpKm, 1e-6);
+  }
+
+  const adjustedA = (rpKm + raKm) / 2;
+  nextOrbit.aKm = adjustedA;
+  nextOrbit.e = clamp(e, 0, 0.99);
+  nextOrbit.periodDays = computeOrbitalPeriodDays(adjustedA, attractorBodyId);
+
+  const periapsisKm = rpKm;
   const minVisualScale = computeMinVisualOrbitScale(
-    record.orbit.attractorBodyId,
+    nextOrbit.attractorBodyId,
     periapsisKm,
   );
-  const currentVisualScale = record.orbit.orbitVisualScale ?? 1;
+  const currentVisualScale = nextOrbit.orbitVisualScale ?? 1;
   const nextVisualScale = Math.max(currentVisualScale, minVisualScale);
+  nextOrbit.orbitVisualScale = nextVisualScale;
 
-  if (record.orbit.orbitVisualScale === nextVisualScale) {
+  if (
+    record.orbit.aKm === nextOrbit.aKm &&
+    record.orbit.e === nextOrbit.e &&
+    record.orbit.periodDays === nextOrbit.periodDays &&
+    record.orbit.orbitVisualScale === nextOrbit.orbitVisualScale
+  ) {
     return record;
   }
 
   return {
     ...record,
-    orbit: {
-      ...record.orbit,
-      orbitVisualScale: nextVisualScale,
-    },
+    orbit: nextOrbit,
   };
 }
 

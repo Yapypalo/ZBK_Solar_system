@@ -583,11 +583,11 @@ async function bootstrap(): Promise<void> {
   };
 
   const formatMissionLinks = (record: SpacecraftRecord): string => {
-    return record.links.map((link) => getBodyName(link.bodyId).toUpperCase()).join(" · ");
+    return record.links.map((link) => getBodyName(link.bodyId).toUpperCase()).join(" | ");
   };
 
   const formatMissionOrbit = (record: SpacecraftRecord): string => {
-    return `a ${record.orbit.aKm.toFixed(0)} km · e ${record.orbit.e.toFixed(3)} · i ${record.orbit.iDeg.toFixed(1)}° · T ${record.orbit.periodDays.toFixed(2)} d`;
+    return `a ${record.orbit.aKm.toFixed(0)} km | e ${record.orbit.e.toFixed(3)} | i ${record.orbit.iDeg.toFixed(1)} deg | T ${record.orbit.periodDays.toFixed(2)} d`;
   };
 
   const setCardVisible = (visible: boolean): void => {
@@ -636,7 +636,20 @@ async function bootstrap(): Promise<void> {
       params.className = "mission-item__params";
       params.textContent = formatMissionOrbit(runtime.record);
 
-      item.append(title, meta, params);
+      const actions = document.createElement("div");
+      actions.className = "mission-item__actions";
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "mission-item__delete";
+      deleteButton.textContent = "DELETE";
+      deleteButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        removeSpacecraft(runtime.record.id);
+      });
+      actions.appendChild(deleteButton);
+
+      item.append(title, meta, params, actions);
 
       if (runtime.record.description) {
         const description = document.createElement("div");
@@ -714,14 +727,19 @@ async function bootstrap(): Promise<void> {
       const linkedBodiesLocal: THREE.Vector3[] = [];
       const soiRadiiScene: number[] = [];
 
-      for (const link of runtimeSpacecraft.record.links) {
-        const linkedRuntime = runtimeBodies.get(link.bodyId);
+      const styleBodies: BodyId[] =
+        runtimeSpacecraft.record.kind === "transfer"
+          ? BODY_IDS.filter((bodyId) => bodyId !== "sun")
+          : runtimeSpacecraft.record.links.map((link) => link.bodyId);
+
+      for (const styleBodyId of styleBodies) {
+        const linkedRuntime = runtimeBodies.get(styleBodyId);
         const visualSoiFloorScene = (linkedRuntime?.config.visualRadius ?? 0) * 1.15;
         linkedBodiesLocal.push(
-          latestPositions[link.bodyId].clone().sub(attractorWorld),
+          latestPositions[styleBodyId].clone().sub(attractorWorld),
         );
         soiRadiiScene.push(
-          Math.max(getBodySoiKm(link.bodyId) / KM_PER_SCENE_UNIT, visualSoiFloorScene),
+          Math.max(getBodySoiKm(styleBodyId) / KM_PER_SCENE_UNIT, visualSoiFloorScene),
         );
       }
 
@@ -747,6 +765,32 @@ async function bootstrap(): Promise<void> {
     runtimeSpacecrafts.push({ record: normalizedRecord, visual });
     updateSpacecraftOrbitStyles();
     return normalizedRecord;
+  };
+
+  const removeSpacecraft = (spacecraftId: string): void => {
+    const runtimeIndex = runtimeSpacecrafts.findIndex(
+      (runtimeSpacecraft) => runtimeSpacecraft.record.id === spacecraftId,
+    );
+    if (runtimeIndex < 0) {
+      return;
+    }
+
+    const runtimeSpacecraft = runtimeSpacecrafts[runtimeIndex];
+    runtimeSpacecraft.visual.root.parent?.remove(runtimeSpacecraft.visual.root);
+    runtimeSpacecraft.visual.solidLine.parent?.remove(runtimeSpacecraft.visual.solidLine);
+    runtimeSpacecraft.visual.dashedLine.parent?.remove(runtimeSpacecraft.visual.dashedLine);
+    runtimeSpacecraft.visual.dispose();
+    runtimeSpacecrafts.splice(runtimeIndex, 1);
+
+    spacecraftRecords = spacecraftRecords.filter((record) => record.id !== spacecraftId);
+    saveSpacecraftRecords(spacecraftRecords);
+
+    if (focusState.focusedBodyId) {
+      renderMissionList(focusState.focusedBodyId);
+    }
+    if (orbitLinesVisible) {
+      updateSpacecraftOrbitStyles();
+    }
   };
 
   const clearCard = (): void => {

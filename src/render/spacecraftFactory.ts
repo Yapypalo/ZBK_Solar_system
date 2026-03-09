@@ -175,6 +175,18 @@ export function createSpacecraftVisual(
       return;
     }
 
+    // Single-body missions are pure orbiters: always render full solid track.
+    if (record.kind === "orbiter") {
+      for (let index = 0; index < orbitPoints.length; index += 1) {
+        const start = orbitPoints[index];
+        const end = orbitPoints[(index + 1) % orbitPoints.length];
+        solidSegments.push(start.x, start.y, start.z, end.x, end.y, end.z);
+      }
+      writeSegmentGeometry(solidLine, solidSegments);
+      writeSegmentGeometry(dashedLine, dashedSegments);
+      return;
+    }
+
     for (let index = 0; index < orbitPoints.length; index += 1) {
       const start = orbitPoints[index];
       const end = orbitPoints[(index + 1) % orbitPoints.length];
