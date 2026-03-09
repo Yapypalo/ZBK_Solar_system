@@ -3,6 +3,7 @@ import { createSolarControls } from "./core/controls";
 import { createEngine } from "./core/engine";
 import { BODY_CARDS } from "./data/bodyCards";
 import { BODY_IDS, BODY_LIST } from "./data/bodies";
+import { buildSpacecraftRecord } from "./data/spacecraftPhysics";
 import { createBodyVisual } from "./render/bodyFactory";
 import {
   createOrbitArcRuntime,
@@ -10,15 +11,23 @@ import {
   updateOrbitArc,
   type OrbitArcRuntime,
 } from "./render/orbitMeshes";
-import { createPostProcessing } from "./render/postprocessing";
-import { createStarfield } from "./render/starfield";
+import { createSpacecraftVisual, type SpacecraftVisualRuntime } from "./render/spacecraftFactory";
+import { createStarfieldRuntime } from "./render/starfield";
 import { degToRad } from "./sim/orbitMath";
 import { propagateSystem } from "./sim/propagator";
+import { getSpacecraftPositionScene } from "./sim/spacecraftPropagator";
 import { formatTimeScale, SimulationClock } from "./sim/time";
+import {
+  loadSpacecraftRecords,
+  saveSpacecraftRecords,
+  upsertSpacecraftRecord,
+} from "./state/spacecraftStore";
 import type {
   BodyId,
   BodyVisualConfig,
+  MissionImportance,
   ModelLoadState,
+  SpacecraftRecord,
 } from "./types";
 import "./styles/theme.css";
 
@@ -29,6 +38,11 @@ interface RuntimeBody {
   spinner: THREE.Group;
   visual: THREE.Object3D;
   modelLoadState: ModelLoadState;
+}
+
+interface RuntimeSpacecraft {
+  record: SpacecraftRecord;
+  visual: SpacecraftVisualRuntime;
 }
 
 interface BodyButtonEntry {
@@ -69,6 +83,15 @@ interface HudRefs {
   cardSubtitle: HTMLElement;
   cardSummary: HTMLElement;
   cardFacts: HTMLElement;
+  missionList: HTMLElement;
+  missionEmpty: HTMLElement;
+  missionFormError: HTMLElement;
+  missionNameInput: HTMLInputElement;
+  missionDescriptionInput: HTMLTextAreaElement;
+  missionBodyASelect: HTMLSelectElement;
+  missionBodyBSelect: HTMLSelectElement;
+  missionImportanceInputs: NodeListOf<HTMLInputElement>;
+  missionCreateButton: HTMLButtonElement;
   warningStripe: HTMLElement;
   hudToggleButton: HTMLButtonElement;
   dateValue: HTMLElement;
@@ -77,6 +100,7 @@ interface HudRefs {
   focusValue: HTMLElement;
   bodyList: HTMLElement;
   releaseFocusButton: HTMLButtonElement;
+  orbitToggleButton: HTMLButtonElement;
 }
 
 const dateFormatter = new Intl.DateTimeFormat("en-GB", {
@@ -93,6 +117,7 @@ const MIN_HIT_RADIUS_PX = 18;
 const MAX_HIT_RADIUS_PX = 68;
 const HIT_RADIUS_SCALE = 2.25;
 const HUD_TOGGLE_IDLE_HIDE_MS = 2_000;
+const SPACECRAFT_SOFT_LIMIT = 80;
 
 function createHud(app: HTMLElement): HudRefs {
   app.innerHTML = `
@@ -113,6 +138,7 @@ function createHud(app: HTMLElement): HudRefs {
       <div class="hud__section-title">CELESTIAL BODIES</div>
       <div id="body-list" class="body-list"></div>
       <button id="focus-release" type="button" class="hud__release">Release Focus (Esc)</button>
+      <button id="orbit-toggle" type="button" class="hud__orbit-toggle">ORBITS: ON</button>
       <div class="hud__hint">[ / ] RATE &middot; SPACE PAUSE &middot; H HUD &middot; DRAG ORBIT &middot; CLICK TARGET</div>
     </aside>
     <aside id="body-card" class="body-card body-card--hidden">
@@ -122,6 +148,47 @@ function createHud(app: HTMLElement): HudRefs {
       <div id="card-subtitle" class="body-card__subtitle">--</div>
       <p id="card-summary" class="body-card__summary">--</p>
       <div id="card-facts" class="body-card__facts"></div>
+      <div class="body-card__mission-head">MISSION SATELLITES</div>
+      <div id="mission-list" class="mission-list"></div>
+      <div id="mission-empty" class="mission-empty">No mission spacecraft linked.</div>
+      <div class="mission-form">
+        <div class="mission-form__title">Create Spacecraft</div>
+        <div class="mission-form__grid">
+          <label class="mission-form__field">
+            <span>Mission Name</span>
+            <input id="mission-name" type="text" maxlength="64" placeholder="Orion" />
+          </label>
+          <label class="mission-form__field">
+            <span>Description</span>
+            <textarea id="mission-description" rows="2" maxlength="220" placeholder="Optional mission note"></textarea>
+          </label>
+          <label class="mission-form__field">
+            <span>Linked Body A</span>
+            <select id="mission-body-a"></select>
+          </label>
+          <label class="mission-form__field">
+            <span>Linked Body B (optional)</span>
+            <select id="mission-body-b"></select>
+          </label>
+        </div>
+        <div class="mission-form__importance">
+          <span class="mission-form__importance-label">Importance</span>
+          <label class="mission-form__radio">
+            <input type="radio" name="mission-importance" value="1" checked />
+            <span>1</span>
+          </label>
+          <label class="mission-form__radio">
+            <input type="radio" name="mission-importance" value="2" />
+            <span>2</span>
+          </label>
+          <label class="mission-form__radio">
+            <input type="radio" name="mission-importance" value="3" />
+            <span>3</span>
+          </label>
+        </div>
+        <div id="mission-form-error" class="mission-form__error"></div>
+        <button id="mission-create" type="button" class="mission-form__submit">Create Spacecraft</button>
+      </div>
     </aside>
     <div class="warning-stripe">CAUTION &middot; LIVE ORBIT TRACKING</div>
   `;
@@ -135,6 +202,17 @@ function createHud(app: HTMLElement): HudRefs {
   const cardSubtitle = app.querySelector<HTMLElement>("#card-subtitle");
   const cardSummary = app.querySelector<HTMLElement>("#card-summary");
   const cardFacts = app.querySelector<HTMLElement>("#card-facts");
+  const missionList = app.querySelector<HTMLElement>("#mission-list");
+  const missionEmpty = app.querySelector<HTMLElement>("#mission-empty");
+  const missionFormError = app.querySelector<HTMLElement>("#mission-form-error");
+  const missionNameInput = app.querySelector<HTMLInputElement>("#mission-name");
+  const missionDescriptionInput = app.querySelector<HTMLTextAreaElement>("#mission-description");
+  const missionBodyASelect = app.querySelector<HTMLSelectElement>("#mission-body-a");
+  const missionBodyBSelect = app.querySelector<HTMLSelectElement>("#mission-body-b");
+  const missionImportanceInputs = app.querySelectorAll<HTMLInputElement>(
+    "input[name='mission-importance']",
+  );
+  const missionCreateButton = app.querySelector<HTMLButtonElement>("#mission-create");
   const warningStripe = app.querySelector<HTMLElement>(".warning-stripe");
   const hudToggleButton = app.querySelector<HTMLButtonElement>("#hud-visibility-toggle");
   const dateValue = app.querySelector<HTMLElement>("#hud-date");
@@ -143,6 +221,7 @@ function createHud(app: HTMLElement): HudRefs {
   const focusValue = app.querySelector<HTMLElement>("#hud-focus");
   const bodyList = app.querySelector<HTMLElement>("#body-list");
   const releaseFocusButton = app.querySelector<HTMLButtonElement>("#focus-release");
+  const orbitToggleButton = app.querySelector<HTMLButtonElement>("#orbit-toggle");
 
   if (
     !viewport ||
@@ -154,6 +233,15 @@ function createHud(app: HTMLElement): HudRefs {
     !cardSubtitle ||
     !cardSummary ||
     !cardFacts ||
+    !missionList ||
+    !missionEmpty ||
+    !missionFormError ||
+    !missionNameInput ||
+    !missionDescriptionInput ||
+    !missionBodyASelect ||
+    !missionBodyBSelect ||
+    missionImportanceInputs.length === 0 ||
+    !missionCreateButton ||
     !warningStripe ||
     !hudToggleButton ||
     !dateValue ||
@@ -161,7 +249,8 @@ function createHud(app: HTMLElement): HudRefs {
     !fpsValue ||
     !focusValue ||
     !bodyList ||
-    !releaseFocusButton
+    !releaseFocusButton ||
+    !orbitToggleButton
   ) {
     throw new Error("HUD initialization failed.");
   }
@@ -176,6 +265,15 @@ function createHud(app: HTMLElement): HudRefs {
     cardSubtitle,
     cardSummary,
     cardFacts,
+    missionList,
+    missionEmpty,
+    missionFormError,
+    missionNameInput,
+    missionDescriptionInput,
+    missionBodyASelect,
+    missionBodyBSelect,
+    missionImportanceInputs,
+    missionCreateButton,
     warningStripe,
     hudToggleButton,
     dateValue,
@@ -184,6 +282,7 @@ function createHud(app: HTMLElement): HudRefs {
     focusValue,
     bodyList,
     releaseFocusButton,
+    orbitToggleButton,
   };
 }
 
@@ -258,10 +357,8 @@ async function bootstrap(): Promise<void> {
   const hud = createHud(app);
   const engine = createEngine(hud.viewport);
   const controls = createSolarControls(engine.camera, engine.renderer.domElement);
-  const postProcessing = createPostProcessing(engine.renderer, engine.scene, engine.camera);
-
-  const starfield = createStarfield();
-  engine.scene.add(starfield);
+  const starfieldRuntime = createStarfieldRuntime();
+  engine.scene.add(starfieldRuntime.root);
 
   const simClock = new SimulationClock({
     currentDate: new Date(),
@@ -272,6 +369,9 @@ async function bootstrap(): Promise<void> {
 
   const runtimeBodies = new Map<BodyId, RuntimeBody>();
   const orbitArcs = new Map<BodyId, OrbitArcRuntime>();
+  const runtimeSpacecrafts: RuntimeSpacecraft[] = [];
+  let spacecraftRecords = loadSpacecraftRecords();
+  let orbitLinesVisible = true;
   const latestPositions = {} as Record<BodyId, THREE.Vector3>;
   for (const bodyId of BODY_IDS) {
     latestPositions[bodyId] = new THREE.Vector3();
@@ -287,19 +387,29 @@ async function bootstrap(): Promise<void> {
     engine.scene.add(runtimeBody.root);
   }
 
+  const initialSnapshot = propagateSystem(BODY_LIST, simClock.getState().currentDate);
+  for (const runtimeBody of runtimeBodyList) {
+    const bodyId = runtimeBody.config.id;
+    const currentPosition = initialSnapshot.positionsScene[bodyId];
+    runtimeBody.root.position.copy(currentPosition);
+    latestPositions[bodyId].copy(currentPosition);
+    runtimeBody.tilt.rotation.z = degToRad(runtimeBody.config.spin.axialTiltDeg);
+    runtimeBody.spinner.rotation.y = initialSnapshot.spinAnglesRad[bodyId];
+  }
+
   for (const config of BODY_LIST) {
     if (!config.orbit) {
       continue;
     }
 
-    const orbitArc = createOrbitArcRuntime(config.id, config.orbit, config.color, 1440);
+    const orbitArc = createOrbitArcRuntime(config.id, config.orbit, config.color, 1024);
     orbitArcs.set(config.id, orbitArc);
 
     const parentRuntime = runtimeBodies.get(config.orbit.centralBody);
     if (parentRuntime) {
-      parentRuntime.root.add(orbitArc.line);
+      parentRuntime.root.add(orbitArc.mesh);
     } else {
-      engine.scene.add(orbitArc.line);
+      engine.scene.add(orbitArc.mesh);
     }
   }
 
@@ -442,8 +552,157 @@ async function bootstrap(): Promise<void> {
     return bestBodyId;
   };
 
+  const isBodyId = (value: string): value is BodyId => {
+    return (BODY_IDS as string[]).includes(value);
+  };
+
+  const getBodyName = (bodyId: BodyId): string => {
+    const runtimeBody = runtimeBodies.get(bodyId);
+    return runtimeBody ? runtimeBody.config.name : bodyId;
+  };
+
+  const formatMissionKind = (record: SpacecraftRecord): string => {
+    return record.kind === "transfer" ? "TRANSFER" : "ORBITER";
+  };
+
+  const formatMissionLinks = (record: SpacecraftRecord): string => {
+    return record.links.map((link) => getBodyName(link.bodyId).toUpperCase()).join(" · ");
+  };
+
+  const formatMissionOrbit = (record: SpacecraftRecord): string => {
+    return `a ${record.orbit.aKm.toFixed(0)} km · e ${record.orbit.e.toFixed(3)} · i ${record.orbit.iDeg.toFixed(1)}° · T ${record.orbit.periodDays.toFixed(2)} d`;
+  };
+
   const setCardVisible = (visible: boolean): void => {
     hud.cardRoot.classList.toggle("body-card--hidden", !visible);
+  };
+
+  const setMissionError = (message: string): void => {
+    hud.missionFormError.textContent = message;
+    hud.missionFormError.classList.toggle("mission-form__error--visible", message.length > 0);
+  };
+
+  const clearMissionError = (): void => {
+    setMissionError("");
+  };
+
+  const clearMissionList = (): void => {
+    hud.missionList.innerHTML = "";
+    hud.missionEmpty.style.display = "block";
+  };
+
+  const renderMissionList = (bodyId: BodyId): void => {
+    hud.missionList.innerHTML = "";
+    const linked = runtimeSpacecrafts.filter((runtime) =>
+      runtime.record.links.some((link) => link.bodyId === bodyId),
+    );
+
+    if (linked.length === 0) {
+      hud.missionEmpty.style.display = "block";
+      return;
+    }
+
+    hud.missionEmpty.style.display = "none";
+    for (const runtime of linked) {
+      const item = document.createElement("article");
+      item.className = "mission-item";
+
+      const title = document.createElement("div");
+      title.className = "mission-item__title";
+      title.textContent = runtime.record.name;
+
+      const meta = document.createElement("div");
+      meta.className = "mission-item__meta";
+      meta.textContent = `${formatMissionKind(runtime.record)} · IMP-${runtime.record.importance} · ${formatMissionLinks(runtime.record)}`;
+
+      const params = document.createElement("div");
+      params.className = "mission-item__params";
+      params.textContent = formatMissionOrbit(runtime.record);
+
+      item.append(title, meta, params);
+
+      if (runtime.record.description) {
+        const description = document.createElement("div");
+        description.className = "mission-item__description";
+        description.textContent = runtime.record.description;
+        item.appendChild(description);
+      }
+
+      hud.missionList.appendChild(item);
+    }
+  };
+
+  const populateMissionBodySelectors = (): void => {
+    hud.missionBodyASelect.innerHTML = "";
+    for (const body of BODY_LIST) {
+      const option = document.createElement("option");
+      option.value = body.id;
+      option.textContent = body.name.toUpperCase();
+      hud.missionBodyASelect.appendChild(option);
+    }
+
+    if (BODY_LIST.length > 0) {
+      hud.missionBodyASelect.value = BODY_LIST[0].id;
+    }
+  };
+
+  const refreshMissionSecondaryOptions = (): void => {
+    const primaryValue = hud.missionBodyASelect.value;
+    const previousSecondary = hud.missionBodyBSelect.value;
+    hud.missionBodyBSelect.innerHTML = "";
+
+    const emptyOption = document.createElement("option");
+    emptyOption.value = "";
+    emptyOption.textContent = "-- NONE --";
+    hud.missionBodyBSelect.appendChild(emptyOption);
+
+    for (const body of BODY_LIST) {
+      if (body.id === primaryValue) {
+        continue;
+      }
+      const option = document.createElement("option");
+      option.value = body.id;
+      option.textContent = body.name.toUpperCase();
+      hud.missionBodyBSelect.appendChild(option);
+    }
+
+    if (
+      previousSecondary &&
+      previousSecondary !== primaryValue &&
+      Array.from(hud.missionBodyBSelect.options).some(
+        (option) => option.value === previousSecondary,
+      )
+    ) {
+      hud.missionBodyBSelect.value = previousSecondary;
+    } else {
+      hud.missionBodyBSelect.value = "";
+    }
+  };
+
+  const getSelectedImportance = (): MissionImportance => {
+    const selected = Array.from(hud.missionImportanceInputs).find((input) => input.checked);
+    if (selected?.value === "2") {
+      return 2;
+    }
+    if (selected?.value === "3") {
+      return 3;
+    }
+    return 1;
+  };
+
+  const addSpacecraftRuntime = (record: SpacecraftRecord): void => {
+    const lowDetailMode = runtimeSpacecrafts.length >= SPACECRAFT_SOFT_LIMIT;
+    const visual = createSpacecraftVisual(record, lowDetailMode);
+    const parentRuntime = runtimeBodies.get(record.orbit.attractorBodyId);
+    if (parentRuntime) {
+      parentRuntime.root.add(visual.root);
+      parentRuntime.root.add(visual.orbitLine);
+    } else {
+      engine.scene.add(visual.root);
+      engine.scene.add(visual.orbitLine);
+    }
+    visual.orbitLine.visible = orbitLinesVisible;
+    runtimeSpacecrafts.push({ record, visual });
   };
 
   const clearCard = (): void => {
@@ -452,6 +711,8 @@ async function bootstrap(): Promise<void> {
     hud.cardSubtitle.textContent = "--";
     hud.cardSummary.textContent = "--";
     hud.cardFacts.innerHTML = "";
+    clearMissionList();
+    clearMissionError();
   };
 
   const renderCard = (bodyId: BodyId): void => {
@@ -482,7 +743,94 @@ async function bootstrap(): Promise<void> {
       row.append(label, value);
       hud.cardFacts.appendChild(row);
     }
+
+    hud.missionBodyASelect.value = bodyId;
+    refreshMissionSecondaryOptions();
+    renderMissionList(bodyId);
+    clearMissionError();
   };
+
+  const onMissionPrimaryBodyChanged = (): void => {
+    refreshMissionSecondaryOptions();
+  };
+
+  const onMissionCreate = (): void => {
+    clearMissionError();
+
+    const missionName = hud.missionNameInput.value.trim();
+    const missionDescription = hud.missionDescriptionInput.value.trim();
+    const bodyAValue = hud.missionBodyASelect.value;
+    const bodyBValue = hud.missionBodyBSelect.value.trim();
+
+    if (!isBodyId(bodyAValue)) {
+      setMissionError("Linked Body A is not selected.");
+      return;
+    }
+
+    if (bodyBValue && !isBodyId(bodyBValue)) {
+      setMissionError("Linked Body B is invalid.");
+      return;
+    }
+
+    if (bodyBValue && bodyBValue === bodyAValue) {
+      setMissionError("Linked Body A and B must be different.");
+      return;
+    }
+
+    const secondaryBodyId: BodyId | undefined = bodyBValue
+      ? (bodyBValue as BodyId)
+      : undefined;
+
+    try {
+      const record = buildSpacecraftRecord(
+        {
+          name: missionName,
+          description: missionDescription,
+          primaryBodyId: bodyAValue,
+          secondaryBodyId,
+          importance: getSelectedImportance(),
+        },
+        {
+          currentDate: simClock.getState().currentDate,
+          bodyPositionsScene: latestPositions,
+        },
+      );
+
+      addSpacecraftRuntime(record);
+      spacecraftRecords = upsertSpacecraftRecord(spacecraftRecords, record);
+      saveSpacecraftRecords(spacecraftRecords);
+
+      hud.missionNameInput.value = "";
+      hud.missionDescriptionInput.value = "";
+      hud.missionBodyBSelect.value = "";
+      hud.missionImportanceInputs.forEach((input) => {
+        input.checked = input.value === "1";
+      });
+
+      if (focusState.focusedBodyId) {
+        renderMissionList(focusState.focusedBodyId);
+      }
+    } catch (error) {
+      setMissionError(error instanceof Error ? error.message : "Failed to create spacecraft.");
+    }
+  };
+
+  populateMissionBodySelectors();
+  refreshMissionSecondaryOptions();
+
+  const validLoadedRecords: SpacecraftRecord[] = [];
+  for (const record of spacecraftRecords) {
+    try {
+      addSpacecraftRuntime(record);
+      validLoadedRecords.push(record);
+    } catch (error) {
+      console.warn("Skipped invalid spacecraft record.", error);
+    }
+  }
+  if (validLoadedRecords.length !== spacecraftRecords.length) {
+    spacecraftRecords = validLoadedRecords;
+    saveSpacecraftRecords(spacecraftRecords);
+  }
 
   const startFocus = (bodyId: BodyId): void => {
     if (!runtimeBodies.get(bodyId)) {
@@ -507,6 +855,21 @@ async function bootstrap(): Promise<void> {
   const bodyButtons = createBodyButtons(hud.bodyList, (bodyId) => {
     startFocus(bodyId);
   });
+
+  const setOrbitLinesVisible = (visible: boolean): void => {
+    orbitLinesVisible = visible;
+    hud.orbitToggleButton.textContent = visible ? "ORBITS: ON" : "ORBITS: OFF";
+    for (const orbitArc of orbitArcs.values()) {
+      orbitArc.mesh.visible = visible;
+    }
+    for (const runtimeSpacecraft of runtimeSpacecrafts) {
+      runtimeSpacecraft.visual.orbitLine.visible = visible;
+    }
+  };
+
+  const onToggleOrbitLines = (): void => {
+    setOrbitLinesVisible(!orbitLinesVisible);
+  };
 
   const updateFocusUi = (): void => {
     const focusedBodyId = focusState.focusedBodyId;
@@ -546,6 +909,10 @@ async function bootstrap(): Promise<void> {
   };
 
   hud.releaseFocusButton.addEventListener("click", releaseFocus);
+  hud.orbitToggleButton.addEventListener("click", onToggleOrbitLines);
+  hud.missionBodyASelect.addEventListener("change", onMissionPrimaryBodyChanged);
+  hud.missionCreateButton.addEventListener("click", onMissionCreate);
+  setOrbitLinesVisible(true);
   clearCard();
   setCardVisible(false);
   updateFocusUi();
@@ -714,7 +1081,6 @@ async function bootstrap(): Promise<void> {
     viewportWidth = hud.viewport.clientWidth || window.innerWidth;
     viewportHeight = hud.viewport.clientHeight || window.innerHeight;
     engine.setSize(viewportWidth, viewportHeight);
-    postProcessing.setSize(viewportWidth, viewportHeight);
 
     for (const orbitArc of orbitArcs.values()) {
       setOrbitVisualResolution(orbitArc, viewportWidth, viewportHeight);
@@ -747,7 +1113,26 @@ async function bootstrap(): Promise<void> {
 
     for (const [bodyId, orbitArc] of orbitArcs) {
       const trueAnomaly = snapshot.trueAnomaliesRad[bodyId] ?? 0;
-      updateOrbitArc(orbitArc, trueAnomaly);
+      if (orbitLinesVisible) {
+        updateOrbitArc(orbitArc, trueAnomaly);
+      } else {
+        orbitArc.mesh.visible = false;
+      }
+    }
+
+    for (const runtimeSpacecraft of runtimeSpacecrafts) {
+      const absolutePosition = getSpacecraftPositionScene(
+        runtimeSpacecraft.record,
+        state.currentDate,
+        latestPositions,
+      );
+      const attractorId = runtimeSpacecraft.record.orbit.attractorBodyId;
+      const parentRuntime = runtimeBodies.get(attractorId);
+      if (parentRuntime) {
+        absolutePosition.sub(latestPositions[attractorId]);
+      }
+      runtimeSpacecraft.visual.root.position.copy(absolutePosition);
+      runtimeSpacecraft.visual.root.rotation.y += deltaSeconds * 0.8;
     }
 
     if (focusTransition.active && focusTransition.bodyId) {
@@ -798,16 +1183,15 @@ async function bootstrap(): Promise<void> {
       }
     }
 
-    starfield.rotation.y += deltaSeconds * 0.0018;
-    starfield.rotation.x += deltaSeconds * 0.00045;
-
     controls.update();
+    starfieldRuntime.update(deltaSeconds, engine.camera.position);
+
     if (focusTransition.active && focusTransition.bodyId) {
       applyFocusComposition(focusTransition.bodyId);
     } else if (focusState.focusLocked && focusState.focusedBodyId) {
       applyFocusComposition(focusState.focusedBodyId);
     }
-    postProcessing.render();
+    engine.renderer.render(engine.scene, engine.camera);
 
     if (deltaSeconds > 0) {
       const instantaneousFps = 1 / deltaSeconds;
@@ -836,19 +1220,25 @@ async function bootstrap(): Promise<void> {
     window.removeEventListener("pointerdown", onGlobalPointerDown);
     window.removeEventListener("beforeunload", onBeforeUnload);
     hud.releaseFocusButton.removeEventListener("click", releaseFocus);
+    hud.orbitToggleButton.removeEventListener("click", onToggleOrbitLines);
+    hud.missionBodyASelect.removeEventListener("change", onMissionPrimaryBodyChanged);
+    hud.missionCreateButton.removeEventListener("click", onMissionCreate);
     hud.hudPanelToggleButton.removeEventListener("click", onToggleHudPanel);
     hud.hudToggleButton.removeEventListener("click", onToggleHud);
     rendererDomElement.removeEventListener("pointerdown", onPointerDown);
     rendererDomElement.removeEventListener("pointerup", onPointerUp);
     rendererDomElement.removeEventListener("pointercancel", onPointerCancel);
     controls.dispose();
-    postProcessing.smaaPass.dispose();
-    postProcessing.composer.dispose();
+    starfieldRuntime.dispose();
     engine.dispose();
 
     for (const orbitArc of orbitArcs.values()) {
       orbitArc.geometry.dispose();
       orbitArc.material.dispose();
+    }
+
+    for (const runtimeSpacecraft of runtimeSpacecrafts) {
+      runtimeSpacecraft.visual.dispose();
     }
   };
 

@@ -1,3 +1,5 @@
+import type { Vector3 } from "three";
+
 export type BodyId =
   | "sun"
   | "mercury"
@@ -11,6 +13,8 @@ export type BodyId =
 export type BodyKind = "star" | "planet" | "satellite";
 export type QualityPreset = "1k" | "4k";
 export type ModelLoadState = "loaded" | "fallback" | "error";
+export type MissionImportance = 1 | 2 | 3;
+export type SpacecraftKind = "orbiter" | "transfer";
 
 export interface BodyCardContent {
   id: BodyId;
@@ -19,6 +23,39 @@ export interface BodyCardContent {
   subtitleEn: string;
   summaryRu: string;
   facts: Array<{ labelEn: string; value: string }>;
+}
+
+export interface SpacecraftLink {
+  bodyId: BodyId;
+  role: "primary" | "secondary";
+}
+
+export interface SpacecraftOrbitParams {
+  attractorBodyId: BodyId;
+  aKm: number;
+  e: number;
+  iDeg: number;
+  raanDeg: number;
+  argPeriapsisDeg: number;
+  meanAnomalyDegAtEpoch: number;
+  periodDays: number;
+  orbitVisualScale?: number;
+}
+
+export interface SpacecraftRecord {
+  id: string;
+  name: string;
+  description?: string;
+  importance: MissionImportance;
+  kind: SpacecraftKind;
+  links: SpacecraftLink[];
+  createdAtIso: string;
+  seed: number;
+  orbit: SpacecraftOrbitParams;
+}
+
+export interface SpacecraftRuntimeSnapshot {
+  positionScene: Vector3;
 }
 
 export interface OrbitElements {

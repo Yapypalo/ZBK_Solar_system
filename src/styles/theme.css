@@ -22,7 +22,11 @@ body,
 
 body {
   overflow: hidden;
-  background: radial-gradient(circle at 20% 10%, #08132f 0%, #03040f 40%, #010106 100%);
+  background-color: #010106;
+  background-image: url("/assets/textures/space-bg.webp");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
   color: var(--technical-white);
   font-family: "Orbitron", "Rajdhani", "Segoe UI", sans-serif;
   letter-spacing: 0.04em;
@@ -236,6 +240,7 @@ body {
 .hud--collapsed .hud__section-title,
 .hud--collapsed .body-list,
 .hud--collapsed .hud__release,
+.hud--collapsed .hud__orbit-toggle,
 .hud--collapsed .hud__hint {
   display: none;
 }
@@ -323,6 +328,24 @@ body {
 .hud__release:hover {
   border-color: rgba(255, 157, 133, 0.95);
   box-shadow: 0 0 0 1px rgba(255, 112, 78, 0.35) inset;
+}
+
+.hud__orbit-toggle {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(84, 163, 255, 0.6);
+  background: rgba(7, 16, 34, 0.84);
+  color: var(--technical-white);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+
+.hud__orbit-toggle:hover {
+  border-color: rgba(113, 198, 255, 0.95);
+  box-shadow: 0 0 0 1px rgba(86, 184, 255, 0.32) inset;
 }
 
 .warning-stripe {
@@ -427,7 +450,7 @@ body {
 .body-card__facts {
   display: grid;
   gap: 6px;
-  max-height: 220px;
+  max-height: 170px;
   overflow-y: auto;
   padding-right: 2px;
 }
@@ -454,6 +477,198 @@ body {
   font-size: 0.68rem;
   font-family: "IBM Plex Mono", "Consolas", monospace;
   text-align: right;
+}
+
+.body-card__mission-head {
+  margin-top: 12px;
+  color: rgba(160, 201, 255, 0.92);
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.mission-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.mission-empty {
+  margin-top: 8px;
+  color: rgba(180, 200, 230, 0.84);
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 0.64rem;
+  letter-spacing: 0.07em;
+}
+
+.mission-item {
+  border: 1px solid rgba(80, 148, 245, 0.34);
+  background: rgba(7, 14, 28, 0.72);
+  padding: 7px 8px;
+}
+
+.mission-item__title {
+  color: #f3f8ff;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.mission-item__meta {
+  margin-top: 3px;
+  color: rgba(181, 209, 244, 0.88);
+  font-size: 0.62rem;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  letter-spacing: 0.08em;
+}
+
+.mission-item__params {
+  margin-top: 4px;
+  color: #e3f0ff;
+  font-size: 0.62rem;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  letter-spacing: 0.04em;
+}
+
+.mission-item__description {
+  margin-top: 5px;
+  color: rgba(219, 236, 255, 0.88);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
+.mission-form {
+  margin-top: 12px;
+  border: 1px solid rgba(86, 157, 255, 0.32);
+  background: rgba(6, 12, 24, 0.62);
+  padding: 9px;
+}
+
+.mission-form__title {
+  color: rgba(245, 251, 255, 0.96);
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 0.64rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.mission-form__grid {
+  display: grid;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.mission-form__field {
+  display: grid;
+  gap: 4px;
+}
+
+.mission-form__field > span {
+  color: #b9cae1;
+  font-size: 0.61rem;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.mission-form__field input,
+.mission-form__field textarea,
+.mission-form__field select {
+  width: 100%;
+  border: 1px solid rgba(89, 161, 255, 0.45);
+  background: rgba(5, 11, 22, 0.92);
+  color: #eef6ff;
+  font-size: 0.67rem;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  letter-spacing: 0.03em;
+  padding: 6px 7px;
+  outline: none;
+}
+
+.mission-form__field input:focus,
+.mission-form__field textarea:focus,
+.mission-form__field select:focus {
+  border-color: rgba(108, 206, 255, 0.94);
+  box-shadow: 0 0 0 1px rgba(68, 224, 255, 0.18) inset;
+}
+
+.mission-form__field textarea {
+  resize: vertical;
+  min-height: 44px;
+}
+
+.mission-form__importance {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.mission-form__importance-label {
+  color: #b9cae1;
+  font-size: 0.61rem;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.mission-form__radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid rgba(88, 156, 247, 0.34);
+  background: rgba(5, 11, 21, 0.9);
+  color: #ebf5ff;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 0.62rem;
+  padding: 4px 6px;
+}
+
+.mission-form__radio input {
+  margin: 0;
+}
+
+.mission-form__error {
+  min-height: 16px;
+  margin-top: 8px;
+  color: rgba(255, 145, 125, 0.95);
+  font-size: 0.62rem;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  letter-spacing: 0.05em;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.mission-form__error--visible {
+  opacity: 1;
+}
+
+.mission-form__submit {
+  width: 100%;
+  margin-top: 4px;
+  border: 1px solid rgba(252, 61, 33, 0.7);
+  background:
+    linear-gradient(140deg, rgba(49, 14, 8, 0.9), rgba(20, 9, 8, 0.9)),
+    rgba(26, 8, 6, 0.9);
+  color: #f8f2ef;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  padding: 7px 8px;
+  cursor: pointer;
+}
+
+.mission-form__submit:hover {
+  border-color: rgba(255, 144, 118, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(255, 132, 102, 0.26) inset,
+    0 0 12px rgba(252, 61, 33, 0.2);
 }
 
 .body-card--hidden {
@@ -546,6 +761,10 @@ body {
   }
 
   .body-card__facts {
-    max-height: 130px;
+    max-height: 100px;
+  }
+
+  .mission-list {
+    max-height: 116px;
   }
 }
