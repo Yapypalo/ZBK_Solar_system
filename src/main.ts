@@ -4,6 +4,7 @@ import { createEngine } from "./core/engine";
 import { BODY_CARDS } from "./data/bodyCards";
 import { BODY_IDS, BODY_LIST } from "./data/bodies";
 import { buildSpacecraftRecord } from "./data/spacecraftPhysics";
+import { createAtmosphereRim, type AtmosphereRimRuntime } from "./render/atmosphereRim";
 import { createBodyVisual } from "./render/bodyFactory";
 import {
   createOrbitArcRuntime,
@@ -38,6 +39,7 @@ interface RuntimeBody {
   spinner: THREE.Group;
   visual: THREE.Object3D;
   modelLoadState: ModelLoadState;
+  rim: AtmosphereRimRuntime | null;
 }
 
 interface RuntimeSpacecraft {
@@ -340,12 +342,16 @@ async function createRuntimeBody(
 
   const { visual, loadState } = await createBodyVisual(config, "1k");
   visual.name = `${config.id}-visual`;
+  const rim = config.id === "sun" ? null : createAtmosphereRim(config.id, config.visualRadius);
 
   spinner.add(visual);
+  if (rim) {
+    tilt.add(rim.root);
+  }
   tilt.add(spinner);
   root.add(tilt);
 
-  return { config, root, tilt, spinner, visual, modelLoadState: loadState };
+  return { config, root, tilt, spinner, visual, modelLoadState: loadState, rim };
 }
 
 async function bootstrap(): Promise<void> {
@@ -1235,6 +1241,10 @@ async function bootstrap(): Promise<void> {
     for (const orbitArc of orbitArcs.values()) {
       orbitArc.geometry.dispose();
       orbitArc.material.dispose();
+    }
+
+    for (const runtimeBody of runtimeBodies.values()) {
+      runtimeBody.rim?.dispose();
     }
 
     for (const runtimeSpacecraft of runtimeSpacecrafts) {
