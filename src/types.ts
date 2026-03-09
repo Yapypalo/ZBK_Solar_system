@@ -58,6 +58,16 @@ export interface SpacecraftRuntimeSnapshot {
   positionScene: Vector3;
 }
 
+export interface SpacecraftExportPayload {
+  version: string;
+  exportedAtIso: string;
+  missions: SpacecraftRecord[];
+}
+
+export interface ActiveMissionState {
+  missionId: string | null;
+}
+
 export interface OrbitElements {
   epochJd: number;
   aKm: number;

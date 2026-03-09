@@ -694,6 +694,30 @@ body {
     0 0 12px rgba(252, 61, 33, 0.2);
 }
 
+.mission-form__transfer-actions {
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.mission-form__ghost {
+  border: 1px solid rgba(86, 157, 255, 0.5);
+  background: rgba(6, 12, 24, 0.78);
+  color: #dceaff;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 0.59rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.mission-form__ghost:hover {
+  border-color: rgba(111, 204, 255, 0.92);
+  box-shadow: 0 0 0 1px rgba(86, 184, 255, 0.24) inset;
+}
+
 .body-card--hidden {
   opacity: 0;
   transform: translateX(12px);

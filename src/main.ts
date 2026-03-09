@@ -16,6 +16,10 @@ import {
   type OrbitArcRuntime,
 } from "./render/orbitMeshes";
 import { createSpacecraftVisual, type SpacecraftVisualRuntime } from "./render/spacecraftFactory";
+import {
+  createSpacecraftInstanceManager,
+  type SpacecraftInstanceHandle,
+} from "./render/spacecraftInstances";
 import { createStarfieldRuntime } from "./render/starfield";
 import { KM_PER_SCENE_UNIT } from "./sim/constants";
 import { degToRad } from "./sim/orbitMath";
@@ -27,6 +31,11 @@ import {
   saveSpacecraftRecords,
   upsertSpacecraftRecord,
 } from "./state/spacecraftStore";
+import {
+  exportSpacecraftJson,
+  mergeSpacecraftById,
+  parseSpacecraftJson,
+} from "./state/spacecraftTransfer";
 import type {
   BodyId,
   BodyVisualConfig,
@@ -48,6 +57,8 @@ interface RuntimeBody {
 interface RuntimeSpacecraft {
   record: SpacecraftRecord;
   visual: SpacecraftVisualRuntime;
+  instanceHandle: SpacecraftInstanceHandle;
+  yawRadians: number;
 }
 
 interface BodyButtonEntry {
@@ -97,6 +108,9 @@ interface HudRefs {
   missionBodyBSelect: HTMLSelectElement;
   missionImportanceInputs: NodeListOf<HTMLInputElement>;
   missionCreateButton: HTMLButtonElement;
+  missionExportButton: HTMLButtonElement;
+  missionImportButton: HTMLButtonElement;
+  missionImportInput: HTMLInputElement;
   warningStripe: HTMLElement;
   hudToggleButton: HTMLButtonElement;
   dateValue: HTMLElement;
@@ -194,6 +208,11 @@ function createHud(app: HTMLElement): HudRefs {
         </div>
         <div id="mission-form-error" class="mission-form__error"></div>
         <button id="mission-create" type="button" class="mission-form__submit">Create Spacecraft</button>
+        <div class="mission-form__transfer-actions">
+          <button id="mission-export" type="button" class="mission-form__ghost">Export JSON</button>
+          <button id="mission-import" type="button" class="mission-form__ghost">Import JSON</button>
+          <input id="mission-import-input" type="file" accept="application/json" hidden />
+        </div>
       </div>
     </aside>
     <div class="warning-stripe">CAUTION &middot; LIVE ORBIT TRACKING</div>
@@ -219,6 +238,9 @@ function createHud(app: HTMLElement): HudRefs {
     "input[name='mission-importance']",
   );
   const missionCreateButton = app.querySelector<HTMLButtonElement>("#mission-create");
+  const missionExportButton = app.querySelector<HTMLButtonElement>("#mission-export");
+  const missionImportButton = app.querySelector<HTMLButtonElement>("#mission-import");
+  const missionImportInput = app.querySelector<HTMLInputElement>("#mission-import-input");
   const warningStripe = app.querySelector<HTMLElement>(".warning-stripe");
   const hudToggleButton = app.querySelector<HTMLButtonElement>("#hud-visibility-toggle");
   const dateValue = app.querySelector<HTMLElement>("#hud-date");
@@ -248,6 +270,9 @@ function createHud(app: HTMLElement): HudRefs {
     !missionBodyBSelect ||
     missionImportanceInputs.length === 0 ||
     !missionCreateButton ||
+    !missionExportButton ||
+    !missionImportButton ||
+    !missionImportInput ||
     !warningStripe ||
     !hudToggleButton ||
     !dateValue ||
@@ -280,6 +305,9 @@ function createHud(app: HTMLElement): HudRefs {
     missionBodyBSelect,
     missionImportanceInputs,
     missionCreateButton,
+    missionExportButton,
+    missionImportButton,
+    missionImportInput,
     warningStripe,
     hudToggleButton,
     dateValue,
@@ -365,6 +393,7 @@ async function bootstrap(): Promise<void> {
   const controls = createSolarControls(engine.camera, engine.renderer.domElement);
   const starfieldRuntime = createStarfieldRuntime();
   engine.scene.add(starfieldRuntime.root);
+  const spacecraftInstanceManager = createSpacecraftInstanceManager(engine.scene);
 
   const simClock = new SimulationClock({
     currentDate: new Date(),
@@ -751,18 +780,22 @@ async function bootstrap(): Promise<void> {
     const normalizedRecord = normalizeSpacecraftRecordForVisuals(record);
     const lowDetailMode = runtimeSpacecrafts.length >= SPACECRAFT_SOFT_LIMIT;
     const visual = createSpacecraftVisual(normalizedRecord, lowDetailMode);
+    const instanceHandle = spacecraftInstanceManager.allocate(normalizedRecord);
     const parentRuntime = runtimeBodies.get(normalizedRecord.orbit.attractorBodyId);
     if (parentRuntime) {
-      parentRuntime.root.add(visual.root);
       parentRuntime.root.add(visual.solidLine);
       parentRuntime.root.add(visual.dashedLine);
     } else {
-      engine.scene.add(visual.root);
       engine.scene.add(visual.solidLine);
       engine.scene.add(visual.dashedLine);
     }
     visual.setOrbitVisible(orbitLinesVisible);
-    runtimeSpacecrafts.push({ record: normalizedRecord, visual });
+    runtimeSpacecrafts.push({
+      record: normalizedRecord,
+      visual,
+      instanceHandle,
+      yawRadians: 0,
+    });
     updateSpacecraftOrbitStyles();
     return normalizedRecord;
   };
@@ -776,9 +809,9 @@ async function bootstrap(): Promise<void> {
     }
 
     const runtimeSpacecraft = runtimeSpacecrafts[runtimeIndex];
-    runtimeSpacecraft.visual.root.parent?.remove(runtimeSpacecraft.visual.root);
     runtimeSpacecraft.visual.solidLine.parent?.remove(runtimeSpacecraft.visual.solidLine);
     runtimeSpacecraft.visual.dashedLine.parent?.remove(runtimeSpacecraft.visual.dashedLine);
+    spacecraftInstanceManager.release(runtimeSpacecraft.instanceHandle);
     runtimeSpacecraft.visual.dispose();
     runtimeSpacecrafts.splice(runtimeIndex, 1);
 
@@ -790,6 +823,34 @@ async function bootstrap(): Promise<void> {
     }
     if (orbitLinesVisible) {
       updateSpacecraftOrbitStyles();
+    }
+  };
+
+  const clearAllSpacecraftRuntime = (): void => {
+    for (const runtimeSpacecraft of runtimeSpacecrafts) {
+      runtimeSpacecraft.visual.solidLine.parent?.remove(runtimeSpacecraft.visual.solidLine);
+      runtimeSpacecraft.visual.dashedLine.parent?.remove(runtimeSpacecraft.visual.dashedLine);
+      spacecraftInstanceManager.release(runtimeSpacecraft.instanceHandle);
+      runtimeSpacecraft.visual.dispose();
+    }
+    runtimeSpacecrafts.length = 0;
+  };
+
+  const rebuildSpacecraftRuntime = (records: SpacecraftRecord[]): void => {
+    clearAllSpacecraftRuntime();
+    const validRecords: SpacecraftRecord[] = [];
+    for (const record of records) {
+      try {
+        const normalizedRecord = addSpacecraftRuntime(record);
+        validRecords.push(normalizedRecord);
+      } catch (error) {
+        console.warn("Skipped invalid spacecraft record during rebuild.", error);
+      }
+    }
+    spacecraftRecords = validRecords;
+    saveSpacecraftRecords(spacecraftRecords);
+    if (focusState.focusedBodyId) {
+      renderMissionList(focusState.focusedBodyId);
     }
   };
 
@@ -903,22 +964,55 @@ async function bootstrap(): Promise<void> {
     }
   };
 
+  const onMissionExport = (): void => {
+    clearMissionError();
+    try {
+      const exportJson = exportSpacecraftJson(spacecraftRecords);
+      const blob = new Blob([exportJson], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const dateSuffix = new Date().toISOString().slice(0, 10);
+      link.href = url;
+      link.download = `zbk-missions-${dateSuffix}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setMissionError(error instanceof Error ? error.message : "Export failed.");
+    }
+  };
+
+  const onMissionImport = (): void => {
+    clearMissionError();
+    hud.missionImportInput.click();
+  };
+
+  const onMissionImportInputChanged = async (): Promise<void> => {
+    clearMissionError();
+    const file = hud.missionImportInput.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    try {
+      const raw = await file.text();
+      const incoming = parseSpacecraftJson(raw);
+      const merged = mergeSpacecraftById(spacecraftRecords, incoming).map((record) =>
+        normalizeSpacecraftRecordForVisuals(record),
+      );
+      rebuildSpacecraftRuntime(merged);
+    } catch (error) {
+      setMissionError(error instanceof Error ? error.message : "Import failed.");
+    } finally {
+      hud.missionImportInput.value = "";
+    }
+  };
+
   populateMissionBodySelectors();
   refreshMissionSecondaryOptions();
 
-  const validLoadedRecords: SpacecraftRecord[] = [];
-  for (const record of spacecraftRecords) {
-    try {
-      const normalizedRecord = addSpacecraftRuntime(record);
-      validLoadedRecords.push(normalizedRecord);
-    } catch (error) {
-      console.warn("Skipped invalid spacecraft record.", error);
-    }
-  }
-  if (validLoadedRecords.length !== spacecraftRecords.length) {
-    spacecraftRecords = validLoadedRecords;
-    saveSpacecraftRecords(spacecraftRecords);
-  }
+  rebuildSpacecraftRuntime(spacecraftRecords);
 
   const startFocus = (bodyId: BodyId): void => {
     if (!runtimeBodies.get(bodyId)) {
@@ -1003,6 +1097,9 @@ async function bootstrap(): Promise<void> {
   hud.orbitToggleButton.addEventListener("click", onToggleOrbitLines);
   hud.missionBodyASelect.addEventListener("change", onMissionPrimaryBodyChanged);
   hud.missionCreateButton.addEventListener("click", onMissionCreate);
+  hud.missionExportButton.addEventListener("click", onMissionExport);
+  hud.missionImportButton.addEventListener("click", onMissionImport);
+  hud.missionImportInput.addEventListener("change", onMissionImportInputChanged);
   setOrbitLinesVisible(true);
   clearCard();
   setCardVisible(false);
@@ -1223,8 +1320,12 @@ async function bootstrap(): Promise<void> {
       if (parentRuntime) {
         absolutePosition.sub(latestPositions[attractorId]);
       }
-      runtimeSpacecraft.visual.root.position.copy(absolutePosition);
-      runtimeSpacecraft.visual.root.rotation.y += deltaSeconds * 0.8;
+      runtimeSpacecraft.yawRadians += deltaSeconds * 0.8;
+      spacecraftInstanceManager.update(
+        runtimeSpacecraft.instanceHandle,
+        absolutePosition,
+        runtimeSpacecraft.yawRadians,
+      );
     }
 
     if (orbitLinesVisible) {
@@ -1325,6 +1426,9 @@ async function bootstrap(): Promise<void> {
     hud.orbitToggleButton.removeEventListener("click", onToggleOrbitLines);
     hud.missionBodyASelect.removeEventListener("change", onMissionPrimaryBodyChanged);
     hud.missionCreateButton.removeEventListener("click", onMissionCreate);
+    hud.missionExportButton.removeEventListener("click", onMissionExport);
+    hud.missionImportButton.removeEventListener("click", onMissionImport);
+    hud.missionImportInput.removeEventListener("change", onMissionImportInputChanged);
     hud.hudPanelToggleButton.removeEventListener("click", onToggleHudPanel);
     hud.hudToggleButton.removeEventListener("click", onToggleHud);
     rendererDomElement.removeEventListener("pointerdown", onPointerDown);
@@ -1340,8 +1444,10 @@ async function bootstrap(): Promise<void> {
     }
 
     for (const runtimeSpacecraft of runtimeSpacecrafts) {
+      spacecraftInstanceManager.release(runtimeSpacecraft.instanceHandle);
       runtimeSpacecraft.visual.dispose();
     }
+    spacecraftInstanceManager.dispose();
   };
 
   window.addEventListener("beforeunload", onBeforeUnload);
