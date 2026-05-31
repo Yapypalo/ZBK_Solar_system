@@ -1,17 +1,13 @@
 # Model layout
 
-Use this folder structure for planetary models:
+Use this folder structure for the active scene models:
 
 - `/assets/models/sun/sun.glb`
 - `/assets/models/sun/1k.glb`
 - `/assets/models/sun/4k.glb` (optional)
-- `/assets/models/mercury/mercury.glb`
-- `/assets/models/venus/venus.glb`
 - `/assets/models/earth/earth.glb`
-- `/assets/models/mars/mars.glb`
-- `/assets/models/moon/moon.glb`
-- `/assets/models/phobos/phobos.glb`
-- `/assets/models/deimos/deimos.glb`
+- `/assets/models/earth/1k.glb`
+- `/assets/models/earth/4k.glb` (optional)
 
 Rules:
 

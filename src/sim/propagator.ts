@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { getSecularAdjustedElements } from "../data/astroData";
 import { J2000_JD } from "../data/orbitalElements";
 import type { BodyVisualConfig, BodyId } from "../types";
 import { KM_PER_SCENE_UNIT } from "./constants";
@@ -48,7 +49,12 @@ export function propagateSystem(
     let position = new THREE.Vector3(0, 0, 0);
     if (body.orbit) {
       const parent = resolvePositionKm(body.orbit.centralBody);
-      const orbitalState = getOrbitalState(body.orbit, julianDate);
+      const secularAdjustedElements = getSecularAdjustedElements(
+        body.id,
+        body.orbit,
+        julianDate,
+      );
+      const orbitalState = getOrbitalState(secularAdjustedElements, julianDate);
       const relative = orbitalState.positionKm;
       trueAnomaliesRad[id] = orbitalState.trueAnomalyRad;
       position = parent.add(relative);

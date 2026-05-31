@@ -4,9 +4,11 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
+    "dev": "vite --configLoader runner",
+    "dev:all": "python scripts/dev_all.py",
+    "satellite:server": "python scripts/satellite_ws_server.py",
+    "build": "tsc && vite build --configLoader runner",
+    "preview": "vite preview --configLoader runner"
   },
   "devDependencies": {
     "@gltf-transform/cli": "^4.3.0",

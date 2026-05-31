@@ -1,6 +1,6 @@
 import type { QualityPreset, SimulationState } from "../types";
 
-const MIN_SCALE_DAYS_PER_SECOND = 1 / 64;
+const MIN_SCALE_DAYS_PER_SECOND = 1 / 86_400;
 const MAX_SCALE_DAYS_PER_SECOND = 256;
 
 function clampScale(value: number): number {

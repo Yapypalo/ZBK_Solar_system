@@ -1,14 +1,17 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import type {
-  BodyVisualConfig,
-  ModelLoadState,
-  QualityPreset,
-} from "../types";
+import type { BodyVisualConfig, ModelLoadState, QualityPreset } from "../types";
 import { degToRad } from "../sim/orbitMath";
 import { normalizeModelToRadius } from "./modelNormalize";
 
 const loader = new GLTFLoader();
+const textureLoader = new THREE.TextureLoader();
+
+interface TextureLoadOptions {
+  colorSpace?: THREE.ColorSpace;
+  anisotropy?: number;
+  flipY?: boolean;
+}
 
 interface TerminatorProfile {
   softness: number;
@@ -19,20 +22,6 @@ interface TerminatorProfile {
 }
 
 const TERMINATOR_PROFILES: Partial<Record<BodyVisualConfig["id"], TerminatorProfile>> = {
-  mercury: {
-    softness: 0.12,
-    dayGain: 1.04,
-    nightFloor: 0.12,
-    twilightBoost: 0.05,
-    twilightColor: "#A2B1C4",
-  },
-  venus: {
-    softness: 0.16,
-    dayGain: 1.08,
-    nightFloor: 0.22,
-    twilightBoost: 0.11,
-    twilightColor: "#F3C79D",
-  },
   earth: {
     softness: 0.18,
     dayGain: 1.14,
@@ -40,39 +29,310 @@ const TERMINATOR_PROFILES: Partial<Record<BodyVisualConfig["id"], TerminatorProf
     twilightBoost: 0.16,
     twilightColor: "#7EA9D1",
   },
-  mars: {
-    softness: 0.14,
-    dayGain: 1.07,
-    nightFloor: 0.14,
-    twilightBoost: 0.09,
-    twilightColor: "#C88B76",
-  },
-  moon: {
-    softness: 0.11,
-    dayGain: 1.02,
-    nightFloor: 0.1,
-    twilightBoost: 0.04,
-    twilightColor: "#AAB9C7",
-  },
-  phobos: {
-    softness: 0.1,
-    dayGain: 1.01,
-    nightFloor: 0.1,
-    twilightBoost: 0.03,
-    twilightColor: "#B7A893",
-  },
-  deimos: {
-    softness: 0.1,
-    dayGain: 1.01,
-    nightFloor: 0.1,
-    twilightBoost: 0.03,
-    twilightColor: "#BDAF99",
-  },
 };
 
 export interface BodyVisualResult {
   visual: THREE.Object3D;
   loadState: ModelLoadState;
+}
+
+interface BodyPbrTextures {
+  albedo: THREE.Texture | null;
+  normal: THREE.Texture | null;
+  roughness: THREE.Texture | null;
+  metalness: THREE.Texture | null;
+  specular: THREE.Texture | null;
+}
+
+const pbrTextureCache = new Map<BodyVisualConfig["id"], Promise<BodyPbrTextures>>();
+
+function loadTexture(path: string, options: TextureLoadOptions = {}): Promise<THREE.Texture> {
+  return new Promise((resolve, reject) => {
+    textureLoader.load(
+      path,
+      (texture) => {
+        texture.colorSpace = options.colorSpace ?? THREE.SRGBColorSpace;
+        texture.anisotropy = options.anisotropy ?? 4;
+        texture.flipY = options.flipY ?? false;
+        resolve(texture);
+      },
+      undefined,
+      reject,
+    );
+  });
+}
+
+async function loadOptionalTexture(
+  paths: string[],
+  options: TextureLoadOptions = {},
+): Promise<THREE.Texture | null> {
+  const uniquePaths = [...new Set(paths)];
+  for (const path of uniquePaths) {
+    try {
+      return await loadTexture(path, options);
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function buildTextureCandidates(bodyId: BodyVisualConfig["id"], labels: string[]): string[] {
+  const extensions = ["jpg", "png", "webp"];
+  const candidates: string[] = [];
+  for (const label of labels) {
+    for (const ext of extensions) {
+      candidates.push(`/assets/textures/${bodyId}/${label}.${ext}`);
+    }
+  }
+  return candidates;
+}
+
+function getOrCreateBodyPbrTextures(bodyId: BodyVisualConfig["id"]): Promise<BodyPbrTextures> {
+  const cached = pbrTextureCache.get(bodyId);
+  if (cached) {
+    return cached;
+  }
+
+  const loading = Promise.all([
+    loadOptionalTexture(
+      buildTextureCandidates(bodyId, [
+        `${bodyId}_albedo_2k`,
+        `${bodyId}_albedo`,
+        `${bodyId}_basecolor_2k`,
+        `${bodyId}_basecolor`,
+        "albedo_2k",
+        "albedo",
+      ]),
+      { colorSpace: THREE.SRGBColorSpace, flipY: false },
+    ),
+    loadOptionalTexture(
+      buildTextureCandidates(bodyId, [
+        `${bodyId}_normal_2k`,
+        `${bodyId}_normal`,
+        "normal_2k",
+        "normal",
+      ]),
+      { colorSpace: THREE.NoColorSpace, flipY: false },
+    ),
+    loadOptionalTexture(
+      buildTextureCandidates(bodyId, [
+        `${bodyId}_roughness_2k`,
+        `${bodyId}_roughness`,
+        "roughness_2k",
+        "roughness",
+      ]),
+      { colorSpace: THREE.NoColorSpace, flipY: false },
+    ),
+    loadOptionalTexture(
+      buildTextureCandidates(bodyId, [
+        `${bodyId}_metalness_2k`,
+        `${bodyId}_metalness`,
+        "metalness_2k",
+        "metalness",
+      ]),
+      { colorSpace: THREE.NoColorSpace, flipY: false },
+    ),
+    loadOptionalTexture(
+      buildTextureCandidates(bodyId, [
+        `${bodyId}_specular_2k`,
+        `${bodyId}_specular`,
+        "specular_2k",
+        "specular",
+      ]),
+      { colorSpace: THREE.NoColorSpace, flipY: false },
+    ),
+  ]).then(([albedo, normal, roughness, metalness, specular]) => ({
+    albedo,
+    normal,
+    roughness,
+    metalness,
+    specular,
+  }));
+
+  pbrTextureCache.set(bodyId, loading);
+  return loading;
+}
+
+function createProceduralEarthCloudTexture(size = 512): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Failed to create cloud texture context.");
+  }
+
+  context.clearRect(0, 0, size, size);
+  context.fillStyle = "#000";
+  context.fillRect(0, 0, size, size);
+
+  for (let i = 0; i < 2000; i += 1) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const radius = Math.random() * 12 + 2;
+    const alpha = Math.random() * 0.22;
+    const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
+    gradient.addColorStop(0, `rgba(255,255,255,${alpha.toFixed(3)})`);
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    context.fillStyle = gradient;
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.anisotropy = 4;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+async function createEarthCloudLayer(config: BodyVisualConfig): Promise<THREE.Mesh> {
+  const cloudMap =
+    (await loadOptionalTexture(
+      [
+        "/assets/textures/earth/earth_clouds_2k.jpg",
+        "/assets/textures/earth/clouds_2k.jpg",
+        "/assets/textures/earth/clouds.jpg",
+        "/assets/textures/earth/earth_clouds.png",
+      ],
+      {
+        colorSpace: THREE.SRGBColorSpace,
+        flipY: false,
+      },
+    )) ?? createProceduralEarthCloudTexture();
+
+  const cloudMaterial = new THREE.MeshStandardMaterial({
+    map: cloudMap,
+    alphaMap: cloudMap,
+    color: new THREE.Color("#EAF6FF"),
+    transparent: true,
+    opacity: 0.34,
+    depthWrite: false,
+    roughness: 1.0,
+    metalness: 0.0,
+    emissive: new THREE.Color("#1A2A35"),
+    emissiveIntensity: 0.03,
+  });
+
+  const cloudGeometry = new THREE.SphereGeometry(config.visualRadius * 1.007, 72, 72);
+  const cloudLayer = new THREE.Mesh(cloudGeometry, cloudMaterial);
+  cloudLayer.name = "earth-cloud-layer";
+  cloudLayer.castShadow = false;
+  cloudLayer.receiveShadow = false;
+  cloudLayer.renderOrder = 2;
+  return cloudLayer;
+}
+
+async function applyEarthNightLights(visual: THREE.Object3D): Promise<void> {
+  const nightMap = await loadOptionalTexture(
+    [
+      "/assets/textures/earth/earth_night_lights_2k.jpg",
+      "/assets/textures/earth/night_lights_2k.jpg",
+      "/assets/textures/earth/night_lights.jpg",
+      "/assets/textures/earth/earth_night_lights.png",
+    ],
+    {
+      colorSpace: THREE.SRGBColorSpace,
+      flipY: false,
+    },
+  );
+
+  if (!nightMap) {
+    return;
+  }
+
+  visual.traverse((node) => {
+    const mesh = node as THREE.Mesh;
+    if (!mesh.isMesh) {
+      return;
+    }
+
+    const applyNightMap = (material: THREE.Material): void => {
+      if (!(material instanceof THREE.MeshStandardMaterial) || material.emissiveMap) {
+        return;
+      }
+      material.emissiveMap = nightMap;
+      material.emissive = new THREE.Color("#C3DAFF");
+      material.emissiveIntensity = 0.58;
+      material.needsUpdate = true;
+    };
+
+    if (Array.isArray(mesh.material)) {
+      mesh.material.forEach(applyNightMap);
+    } else {
+      applyNightMap(mesh.material);
+    }
+  });
+}
+
+function applyBodyPbrTextures(
+  visual: THREE.Object3D,
+  config: BodyVisualConfig,
+  textureSet: BodyPbrTextures,
+): void {
+  if (
+    !textureSet.albedo &&
+    !textureSet.normal &&
+    !textureSet.roughness &&
+    !textureSet.metalness &&
+    !textureSet.specular
+  ) {
+    return;
+  }
+
+  visual.traverse((node) => {
+    const mesh = node as THREE.Mesh;
+    if (!mesh.isMesh) {
+      return;
+    }
+
+    const applyToMaterial = (material: THREE.Material): void => {
+      if (!(material instanceof THREE.MeshStandardMaterial)) {
+        return;
+      }
+
+      if (!material.map && textureSet.albedo) {
+        material.map = textureSet.albedo;
+      }
+      if (!material.normalMap && textureSet.normal) {
+        material.normalMap = textureSet.normal;
+      }
+      if (!material.roughnessMap && textureSet.roughness) {
+        material.roughnessMap = textureSet.roughness;
+      }
+      if (!material.metalnessMap && textureSet.metalness) {
+        material.metalnessMap = textureSet.metalness;
+      }
+
+      if (textureSet.specular) {
+        const physicalLike = material as THREE.MeshPhysicalMaterial & {
+          specularIntensityMap?: THREE.Texture | null;
+          specularIntensity?: number;
+        };
+        if ("specularIntensityMap" in physicalLike) {
+          physicalLike.specularIntensityMap = textureSet.specular;
+          physicalLike.specularIntensity = Math.max(physicalLike.specularIntensity ?? 0.35, 0.35);
+        } else {
+          material.envMapIntensity = Math.max(material.envMapIntensity, 0.35);
+        }
+      }
+
+      if (config.id === "earth" && material.map) {
+        material.normalScale.set(0.85, 0.85);
+      }
+
+      material.needsUpdate = true;
+    };
+
+    if (Array.isArray(mesh.material)) {
+      mesh.material.forEach(applyToMaterial);
+    } else {
+      applyToMaterial(mesh.material);
+    }
+  });
 }
 
 function loadModel(path: string): Promise<THREE.Object3D> {
@@ -96,64 +356,6 @@ function containsMesh(object: THREE.Object3D): boolean {
   return hasMesh;
 }
 
-function findDeimosTargetMesh(root: THREE.Object3D): THREE.Mesh | null {
-  const meshes: THREE.Mesh[] = [];
-  root.traverse((node) => {
-    const mesh = node as THREE.Mesh;
-    if (mesh.isMesh) {
-      meshes.push(mesh);
-    }
-  });
-
-  if (meshes.length === 0) {
-    return null;
-  }
-
-  return meshes.find((mesh) => mesh.name.toLowerCase().includes("deimos")) ?? meshes[0];
-}
-
-function cloneMeshMaterial(
-  material: THREE.Material | THREE.Material[],
-): THREE.Material | THREE.Material[] {
-  if (Array.isArray(material)) {
-    return material.map((item) => item.clone());
-  }
-  return material.clone();
-}
-
-function buildFlattenedDeimosGroup(targetMesh: THREE.Mesh): THREE.Group | null {
-  if (!targetMesh.geometry) {
-    return null;
-  }
-
-  targetMesh.updateWorldMatrix(true, false);
-
-  const geometry = targetMesh.geometry.clone();
-  geometry.applyMatrix4(targetMesh.matrixWorld);
-  geometry.computeBoundingBox();
-
-  const bounds = geometry.boundingBox;
-  if (!bounds) {
-    return null;
-  }
-
-  const center = new THREE.Vector3();
-  bounds.getCenter(center);
-  geometry.translate(-center.x, -center.y, -center.z);
-  geometry.computeBoundingSphere();
-
-  const flattenedMesh = new THREE.Mesh(
-    geometry,
-    cloneMeshMaterial(targetMesh.material),
-  );
-  flattenedMesh.name = targetMesh.name || "deimos-flattened";
-
-  const group = new THREE.Group();
-  group.name = "deimos-flattened-group";
-  group.add(flattenedMesh);
-  return group;
-}
-
 function applyTerminatorPatch(
   material: THREE.MeshStandardMaterial,
   config: BodyVisualConfig,
@@ -163,11 +365,7 @@ function applyTerminatorPatch(
   }
 
   const profile = TERMINATOR_PROFILES[config.id];
-  if (!profile) {
-    return;
-  }
-
-  if (material.userData.zbkTerminatorPatched === true) {
+  if (!profile || material.userData.zbkTerminatorPatched === true) {
     return;
   }
 
@@ -234,41 +432,29 @@ ${shader.fragmentShader}
 
 function tuneMeshMaterial(mesh: THREE.Mesh, config: BodyVisualConfig): void {
   const applyTuning = (material: THREE.Material): void => {
-    if (material instanceof THREE.MeshStandardMaterial) {
-      material.roughness = config.id === "sun" ? 0.55 : Math.min(material.roughness, 0.95);
-      material.metalness = config.id === "sun" ? 0.0 : Math.min(material.metalness, 0.12);
-      material.color = material.map ? new THREE.Color("#FFFFFF") : new THREE.Color(config.color);
-
-      if (config.id === "earth" && material.emissiveMap) {
-        material.emissive = new THREE.Color("#FFFFFF");
-        material.emissiveIntensity = 1.2;
-      } else if (config.id === "sun") {
-        material.color = new THREE.Color("#FFE08A");
-        material.emissive = new THREE.Color("#FFC94A");
-        material.emissiveIntensity = 0.94;
-        material.roughness = 0.64;
-        material.metalness = 0;
-      } else if (config.id === "mercury") {
-        material.color = new THREE.Color("#8E8577");
-        material.emissive = new THREE.Color("#000000");
-        material.emissiveIntensity = 0;
-        material.metalness = 0;
-        material.roughness = Math.max(material.roughness, 0.995);
-      } else {
-        material.emissive = new THREE.Color("#000000");
-        material.emissiveIntensity = 0;
-      }
-
-      if (config.id === "sun") {
-        material.envMapIntensity = 0;
-      } else if (config.id === "mercury") {
-        material.envMapIntensity = 0.08;
-      } else {
-        material.envMapIntensity = 1.0;
-      }
-      applyTerminatorPatch(material, config);
-      material.needsUpdate = true;
+    if (!(material instanceof THREE.MeshStandardMaterial)) {
+      return;
     }
+
+    material.color = material.map ? new THREE.Color("#FFFFFF") : new THREE.Color(config.color);
+    material.roughness = config.id === "sun" ? 0.74 : Math.min(material.roughness, 0.95);
+    material.metalness = config.id === "sun" ? 0.0 : Math.min(material.metalness, 0.12);
+    material.envMapIntensity = config.id === "sun" ? 0 : 0.8;
+
+    if (config.id === "sun") {
+      material.color = new THREE.Color("#FFD56D");
+      material.emissive = new THREE.Color("#FFCD59");
+      material.emissiveIntensity = 1.08;
+    } else if (material.emissiveMap) {
+      material.emissive = new THREE.Color("#FFFFFF");
+      material.emissiveIntensity = 1.06;
+    } else {
+      material.emissive = new THREE.Color("#000000");
+      material.emissiveIntensity = 0;
+    }
+
+    applyTerminatorPatch(material, config);
+    material.needsUpdate = true;
   };
 
   if (Array.isArray(mesh.material)) {
@@ -285,8 +471,9 @@ function applyVisualTuning(object: THREE.Object3D, config: BodyVisualConfig): vo
       return;
     }
 
-    mesh.castShadow = false;
-    mesh.receiveShadow = false;
+    const isSun = config.id === "sun";
+    mesh.castShadow = !isSun;
+    mesh.receiveShadow = !isSun;
     tuneMeshMaterial(mesh, config);
   });
 }
@@ -301,6 +488,8 @@ function createFallbackSphere(config: BodyVisualConfig): THREE.Object3D {
     metalness: config.id === "sun" ? 0.0 : 0.02,
   });
   const mesh = new THREE.Mesh(geometry, material);
+  mesh.castShadow = config.id !== "sun";
+  mesh.receiveShadow = config.id !== "sun";
   tuneMeshMaterial(mesh, config);
   return mesh;
 }
@@ -359,34 +548,32 @@ export async function createBodyVisual(
     };
   }
 
-  let visual = loadedVisual;
-  if (config.id === "deimos") {
-    const targetMesh = findDeimosTargetMesh(loadedVisual);
-    if (targetMesh) {
-      const flattened = buildFlattenedDeimosGroup(targetMesh);
-      if (flattened) {
-        visual = flattened;
-      }
-    }
-  }
-
-  if (!containsMesh(visual)) {
+  if (!containsMesh(loadedVisual)) {
     return {
       visual: createFallbackSphere(config),
       loadState: "fallback",
     };
   }
 
-  applyVisualTuning(visual, config);
-  normalizeModelToRadius(visual, config.visualRadius);
+  const pbrTextures = await getOrCreateBodyPbrTextures(config.id);
+  applyBodyPbrTextures(loadedVisual, config, pbrTextures);
+  applyVisualTuning(loadedVisual, config);
+  normalizeModelToRadius(loadedVisual, config.visualRadius);
+
   if (config.modelScaleMultiplier && config.modelScaleMultiplier > 0) {
-    visual.scale.multiplyScalar(config.modelScaleMultiplier);
+    loadedVisual.scale.multiplyScalar(config.modelScaleMultiplier);
+  }
+
+  if (config.id === "earth") {
+    await applyEarthNightLights(loadedVisual);
+    const cloudLayer = await createEarthCloudLayer(config);
+    loadedVisual.add(cloudLayer);
   }
 
   if (config.orientationOffsetDeg) {
     const [xDeg, yDeg, zDeg] = config.orientationOffsetDeg;
-    visual.rotation.set(degToRad(xDeg), degToRad(yDeg), degToRad(zDeg));
+    loadedVisual.rotation.set(degToRad(xDeg), degToRad(yDeg), degToRad(zDeg));
   }
 
-  return { visual, loadState: "loaded" };
+  return { visual: loadedVisual, loadState: "loaded" };
 }

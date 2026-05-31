@@ -89,7 +89,7 @@ void main() {
 `;
 
 export interface OrbitArcRuntime {
-  bodyId: BodyId;
+  bodyId: BodyId | "satellite";
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
   geometry: THREE.BufferGeometry;
   material: THREE.ShaderMaterial;
@@ -265,7 +265,7 @@ function sampleRingPoint(
 }
 
 export function createOrbitArcRuntime(
-  bodyId: BodyId,
+  bodyId: BodyId | "satellite",
   orbit: OrbitElements,
   color: THREE.ColorRepresentation,
   samples = 1440,

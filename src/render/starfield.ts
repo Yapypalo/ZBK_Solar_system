@@ -116,7 +116,7 @@ export function createStarfieldRuntime(): StarfieldRuntime {
   root.name = "starfield-root";
 
   const farLayer = createStarLayer({
-    count: 4_800,
+    count: 1_800,
     minRadius: 1_500,
     maxRadius: 4_200,
     minSize: 1.0,

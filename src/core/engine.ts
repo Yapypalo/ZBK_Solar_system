@@ -5,8 +5,10 @@ export interface EngineContext {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   renderer: THREE.WebGLRenderer;
+  solarLight: THREE.PointLight;
   clock: THREE.Clock;
   setSize: (width: number, height: number) => void;
+  setExposure: (value: number) => void;
   dispose: () => void;
 }
 
@@ -37,19 +39,28 @@ export function createEngine(mount: HTMLElement): EngineContext {
   }
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.3;
+  renderer.toneMappingExposure = 1.2;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.setPixelRatio(getEffectivePixelRatio(window.devicePixelRatio));
   renderer.setSize(initialWidth, initialHeight);
   mount.appendChild(renderer.domElement);
 
-  const ambientLight = new THREE.AmbientLight("#AFC8F0", 0.03);
+  const ambientLight = new THREE.AmbientLight("#AFC8F0", 0.02);
   scene.add(ambientLight);
 
-  const hemisphereLight = new THREE.HemisphereLight("#AFCBF5", "#060B13", 0.06);
+  const hemisphereLight = new THREE.HemisphereLight("#AFCBF5", "#060B13", 0.04);
   scene.add(hemisphereLight);
 
-  const solarLight = new THREE.PointLight("#FFF5E3", 300_000, 0, 2);
+  const solarLight = new THREE.PointLight("#FFF5E3", 320_000, 0, 2);
   solarLight.position.set(0, 0, 0);
+  solarLight.castShadow = true;
+  solarLight.shadow.mapSize.set(1024, 1024);
+  solarLight.shadow.bias = -0.00015;
+  solarLight.shadow.normalBias = 0.02;
+  solarLight.shadow.radius = 2.2;
+  solarLight.shadow.camera.near = 0.5;
+  solarLight.shadow.camera.far = 3000;
   scene.add(solarLight);
 
   const rimLight = new THREE.DirectionalLight("#7FA7FF", 0.12);
@@ -72,6 +83,10 @@ export function createEngine(mount: HTMLElement): EngineContext {
     renderer.setSize(safeWidth, safeHeight);
   };
 
+  const setExposure = (value: number): void => {
+    renderer.toneMappingExposure = THREE.MathUtils.clamp(value, 0.65, 1.85);
+  };
+
   const handleResize = (): void => {
     setSize(mount.clientWidth || window.innerWidth, mount.clientHeight || window.innerHeight);
   };
@@ -83,5 +98,5 @@ export function createEngine(mount: HTMLElement): EngineContext {
     renderer.dispose();
   };
 
-  return { scene, camera, renderer, clock, setSize, dispose };
+  return { scene, camera, renderer, solarLight, clock, setSize, setExposure, dispose };
 }
